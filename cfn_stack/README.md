@@ -52,11 +52,17 @@ NetAIOps는 AWS Bedrock AgentCore 기반의 지능형 네트워크 트러블슈�
 
 ### 방법 1: 배포 스크립트 사용 (권장)
 
-```bash
-cd /home/ec2-user/code/netaiops_v1/cfn_stack
+> **참고**: 대용량 CloudFormation 템플릿(>51KB)을 배포하기 위해 S3 버킷이 자동으로 생성됩니다.
+> 버킷 이름: `netaiops-cfn-{AWS_ACCOUNT_ID}-{AWS_REGION}`
 
-# 전체 배포
+```bash
+cd cfn_stack
+
+# 전체 배포 (S3 버킷 자동 생성)
 ./deploy.sh deploy-all
+
+# 리전 지정 배포
+./deploy.sh deploy-all --region ap-northeast-2
 
 # 개별 배포
 ./deploy.sh deploy-base              # 기본 인프라만
@@ -65,14 +71,41 @@ cd /home/ec2-user/code/netaiops_v1/cfn_stack
 ./deploy.sh deploy-modules           # 모듈 설치
 ./deploy.sh deploy-traffic           # Traffic Mirroring
 
+# 초기화 (S3 버킷만 생성)
+./deploy.sh init
+
 # 상태 확인
 ./deploy.sh status
 
 # 전체 삭제
 ./deploy.sh delete-all
+
+# 전체 삭제 + S3 버킷도 삭제
+./deploy.sh delete-all --delete-bucket
+
+# S3 버킷만 삭제
+./deploy.sh delete-bucket
 ```
 
+### S3 버킷 정보
+
+배포 스크립트는 다음과 같은 S3 버킷을 자동으로 관리합니다:
+
+| 항목 | 값 |
+|------|-----|
+| **버킷 이름** | `netaiops-cfn-{AWS_ACCOUNT_ID}-{AWS_REGION}` |
+| **용도** | CloudFormation 템플릿 저장 |
+| **버전 관리** | 활성화 |
+| **퍼블릭 액세스** | 차단됨 |
+
 ### 방법 2: AWS CLI 직접 사용
+
+> **중요**: 대용량 템플릿(>51KB)은 `--s3-bucket` 파라미터가 필요합니다.
+
+```bash
+# S3 버킷 생성 (최초 1회)
+aws s3 mb s3://netaiops-cfn-$(aws sts get-caller-identity --query Account --output text)-us-east-1
+```
 
 #### 1단계: 기본 애플리케이션 인프라
 
@@ -80,6 +113,7 @@ cd /home/ec2-user/code/netaiops_v1/cfn_stack
 aws cloudformation deploy \
   --template-file sample-appication.yaml \
   --stack-name netaiops-sample-app \
+  --s3-bucket netaiops-cfn-<AWS_ACCOUNT_ID>-us-east-1 \
   --parameter-overrides DBPassword=<your-password> \
   --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
   --region us-east-1
