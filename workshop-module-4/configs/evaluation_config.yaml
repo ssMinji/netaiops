@@ -1,0 +1,66 @@
+# AgentCore Evaluation Framework Configuration
+# This file contains all configurable parameters for the evaluation framework
+
+# AWS Configuration
+aws:
+  region: "us-east-1"
+  account_id: "${AWS_ACCOUNT_ID}"  # Will be resolved from environment
+
+# LLM Judge Configuration
+llm_judge:
+  model_id: "${LLM_JUDGE_MODEL_ID:-global.anthropic.claude-opus-4-5-20251101-v1:0}"
+  max_tokens: 2000
+  evaluation_dimensions:
+    - "helpfulness"
+    - "accuracy" 
+    - "clarity"
+    - "professionalism"
+    - "completeness"
+
+# CloudWatch Configuration
+cloudwatch:
+  log_retention_days: 30
+  query_timeout_seconds: 60
+  max_query_attempts: 30
+  log_propagation_delay_seconds: 5
+
+# Agent Configurations - To be loaded from external config files
+agents:
+  # Agent configs will be loaded from module3-config.json or environment
+  config_source: "${AGENT_CONFIG_SOURCE:-module3-config.json}"
+  fallback_config_path: "../module-3/module3-config.json.backup"
+
+# Performance Thresholds
+performance_thresholds:
+  max_response_time_seconds: 30
+  min_success_rate_percentage: 80
+  min_tool_detection_accuracy: 70
+
+# Test Configuration
+testing:
+  session_timeout_seconds: 300
+  max_retries: 3
+  parallel_execution: false
+  test_data_path: "configs/test_scenarios/"
+
+# Evaluation Scoring
+scoring:
+  dimension_weights:
+    helpfulness: 0.25
+    accuracy: 0.25
+    clarity: 0.20
+    professionalism: 0.15
+    completeness: 0.15
+  
+  tool_usage_weight: 0.3
+  response_quality_weight: 0.7
+  
+  passing_score_threshold: 3.5
+  excellent_score_threshold: 4.5
+
+# Output Configuration
+output:
+  results_directory: "results/"
+  report_format: "json"
+  include_detailed_logs: true
+  generate_html_report: false

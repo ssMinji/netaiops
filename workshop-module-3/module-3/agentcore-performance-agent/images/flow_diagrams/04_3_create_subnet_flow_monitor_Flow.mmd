@@ -1,0 +1,27 @@
+graph TD
+    A[create_subnet_flow_monitor] --> B{log_group_name provided?}
+    B -->|No| C[Generate unique log group name]
+    B -->|Yes| D[Use provided name]
+    C --> E[Create CloudWatch Log Group]
+    D --> E
+    E --> F{Log group created?}
+    F -->|Success| G[Get IAM Role ARN]
+    F -->|Already exists| G
+    F -->|Error| H[Return Error]
+    G --> I[Create VPC Flow Logs]
+    I --> J{TCP flags included?}
+    J -->|Yes| K[Use extended log format]
+    J -->|No| L[Use default log format]
+    K --> M[Add Resource Tags]
+    L --> M
+    M --> N[Return Success Response]
+    
+    subgraph "AWS Services Used"
+        O[CloudWatch Logs create_log_group]
+        P[EC2 create_flow_logs]
+        Q[STS get_caller_identity]
+    end
+    
+    E --> O
+    I --> P
+    G --> Q

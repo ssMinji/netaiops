@@ -1,0 +1,29 @@
+graph TD
+    A[_generate_traffic_analysis_commands] --> B[Map time_period to find filter]
+    B --> C[Create base commands]
+    C --> D{analysis_type includes 'summary'?}
+    D -->|Yes| E[Add Summary Analysis Commands]
+    D -->|No| F{analysis_type includes 'performance'?}
+    E --> F
+    F -->|Yes| G[Add Performance Analysis Commands]
+    F -->|No| H{analysis_type includes 'security'?}
+    G --> H
+    H -->|Yes| I[Add Security Analysis Commands]
+    H -->|No| J{export_results enabled?}
+    I --> J
+    J -->|Yes| K[Add S3 Export Commands]
+    J -->|No| L[Add Completion Commands]
+    K --> L
+    L --> M[Return Complete Command List]
+    
+    subgraph "Analysis Types"
+        N[Summary: capinfos, protocol distribution, conversations]
+        O[Performance: TCP stats, HTTP analysis]
+        P[Security: Port scan detection, protocol anomalies]
+        Q[Export: S3 upload with organized structure]
+    end
+    
+    E --> N
+    G --> O
+    I --> P
+    K --> Q

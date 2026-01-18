@@ -1,0 +1,12 @@
+# Performance Agent Resources
+# Generated on: 2025-10-03T13:32:48Z
+# Account: 104398007905
+# Region: us-east-1
+
+metadata:
+  created_at: "2025-10-03T13:32:48Z"
+  account_id: "104398007905"
+  region: "us-east-1"
+  script_version: "setup-performance-steps-0-7.sh"
+
+resources:

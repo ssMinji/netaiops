@@ -1,0 +1,45 @@
+graph TB
+    subgraph "performance_tools.py Module"
+        subgraph "Imports & Dependencies"
+            A[json, boto3, time, logging]
+            B[typing, datetime, uuid]
+        end
+        
+        subgraph "PerformanceAnalyzer Class"
+            C[__init__]
+            D[analyze_vpc_flow_metrics]
+            E[create_subnet_flow_monitor]
+            F[setup_traffic_mirroring]
+            G[_setup_packet_capture_on_target]
+            H[analyze_tcp_performance]
+            I[analyze_captured_traffic_data]
+            J[_generate_traffic_analysis_commands]
+            K[_parse_traffic_analysis_results]
+        end
+        
+        subgraph "Public Async Functions"
+            L[analyze_vpc_flow_metrics]
+            M[create_subnet_flow_monitor]
+            N[setup_traffic_mirroring]
+            O[analyze_tcp_performance]
+            P[analyze_captured_traffic_data]
+            Q[install_network_flow_monitor_agent]
+        end
+    end
+    
+    A --> C
+    B --> C
+    C --> D
+    C --> E
+    C --> F
+    C --> H
+    C --> I
+    F --> G
+    I --> J
+    I --> K
+    
+    L --> D
+    M --> E
+    N --> F
+    O --> H
+    P --> I

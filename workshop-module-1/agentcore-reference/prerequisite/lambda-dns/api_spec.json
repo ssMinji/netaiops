@@ -1,0 +1,24 @@
+[
+    {
+        "name": "dns-resolve",
+        "description": "Resolve DNS hostname from Route 53 Private Hosted Zones to find corresponding EC2 instances or ENIs. This tool should be called before connectivity-check when using DNS names instead of instance IDs.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "hostname": {
+                    "type": "string",
+                    "description": "DNS hostname to resolve from Route 53 Private Hosted Zone (e.g., app-frontend.examplecorp.com, database.internal.company.com)"
+                },
+                "dns_name": {
+                    "type": "string", 
+                    "description": "Alternative parameter name for hostname (supports both for compatibility)"
+                },
+                "region": {
+                    "type": "string",
+                    "description": "AWS region to search in (default: us-east-1)"
+                }
+            },
+            "required": ["hostname"]
+        }
+    }
+]

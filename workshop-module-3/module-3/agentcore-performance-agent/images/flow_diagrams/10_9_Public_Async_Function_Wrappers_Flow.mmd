@@ -1,0 +1,31 @@
+graph TD
+    A[Public Async Function Called] --> B[Create PerformanceAnalyzer Instance]
+    B --> C[Call Corresponding Class Method]
+    C --> D[Get Results Dictionary]
+    D --> E[Convert to JSON String]
+    E --> F[Return JSON Response]
+    
+    subgraph "Public Functions"
+        G[analyze_vpc_flow_metrics]
+        H[create_subnet_flow_monitor]
+        I[setup_traffic_mirroring]
+        J[analyze_tcp_performance]
+        K[analyze_captured_traffic_data]
+        L[install_network_flow_monitor_agent]
+    end
+    
+    subgraph "Class Methods"
+        M[PerformanceAnalyzer.analyze_vpc_flow_metrics]
+        N[PerformanceAnalyzer.create_subnet_flow_monitor]
+        O[PerformanceAnalyzer.setup_traffic_mirroring]
+        P[PerformanceAnalyzer.analyze_tcp_performance]
+        Q[PerformanceAnalyzer.analyze_captured_traffic_data]
+        R[NetworkFlowMonitorChain.process_request]
+    end
+    
+    G --> M
+    H --> N
+    I --> O
+    J --> P
+    K --> Q
+    L --> R

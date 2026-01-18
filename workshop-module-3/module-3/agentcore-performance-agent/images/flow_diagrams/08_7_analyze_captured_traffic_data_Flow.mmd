@@ -1,0 +1,30 @@
+graph TD
+    A[analyze_captured_traffic_data] --> B[Generate Analysis Commands]
+    B --> C[Execute Commands via SSM]
+    C --> D[Wait for Analysis Completion]
+    D --> E{Analysis completed?}
+    E -->|Success| F[Get Analysis Output]
+    E -->|Failed/Timeout| G[Get Error Information]
+    F --> H[Parse Analysis Results]
+    G --> I[Return Error Response]
+    H --> J{export_results enabled?}
+    J -->|Yes| K[Include S3 Export Location]
+    J -->|No| L[Skip S3 Information]
+    K --> M[Return Comprehensive Results]
+    L --> M
+    
+    subgraph "Helper Functions"
+        N[_generate_traffic_analysis_commands]
+        O[_parse_traffic_analysis_results]
+    end
+    
+    B --> N
+    H --> O
+    
+    subgraph "AWS Services Used"
+        P[SSM send_command]
+        Q[SSM get_command_invocation]
+    end
+    
+    C --> P
+    F --> Q

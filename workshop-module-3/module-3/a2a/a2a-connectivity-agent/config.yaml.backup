@@ -1,0 +1,46 @@
+agent_card_info:
+  agent_arn: arn:aws:bedrock-agentcore:us-east-1:888627818870:runtime/a2a_troubleshooting_agent_runtime-bpj7VJ9sxi
+  agent_tags:
+  - connectivity
+  - troubleshooting
+  - aws
+  - dns
+  - network-analysis
+  - agentcore
+  client_id: 1so0mke5le9dhrbqrkaldkjl7j
+  discovery_url: https://cognito-idp.us-east-1.amazonaws.com/us-east-1_dTiygqXab/.well-known/openid-configuration
+  identity_group: a2a-performance-888627818870-486b3980
+  scope: netops-a2a-server-486b3980/gateway:read netops-a2a-server-486b3980/gateway:write
+agent_metadata:
+  capabilities:
+    push_notifications: true
+    streaming: true
+  description: Routes requests to a Bedrock AgentCore runtime that provides DNS resolution
+    and connectivity analysis capabilities for network troubleshooting.
+  name: Connectivity_Troubleshooting_Agent
+  supported_content_types:
+  - text/plain
+  version: 1.0.0
+agent_skills:
+- description: Resolves DNS hostnames to EC2 instance IDs and analyzes network connectivity
+    between resources with automated fix capabilities.
+  examples:
+  - Check connectivity between app-frontend.examplecorp.com and app-backend.examplecorp.com
+    using TCP on port 80
+  - Resolve DNS hostname database.internal.com to instance ID
+  - Analyze connectivity between i-123 and i-456 using TCP on port 443
+  - Fix connectivity issues between EC2 instances by updating security group rules
+  id: dns_connectivity_troubleshooting
+  name: DNS Resolution and Connectivity Troubleshooting
+  tags:
+  - dns-resolution
+  - connectivity-analysis
+  - network-troubleshooting
+  - security-groups
+  - automated-fixes
+executor_config:
+  stream: true
+  request_timeout_s: 900
+server:
+  default_host: 0.0.0.0
+  default_port: 10003

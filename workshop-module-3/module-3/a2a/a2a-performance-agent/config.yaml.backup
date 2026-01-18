@@ -1,0 +1,49 @@
+agent_card_info:
+  agent_arn: arn:aws:bedrock-agentcore:us-east-1:888627818870:runtime/a2a_performance_agent_runtime-vNdKuIF0TX
+  agent_tags:
+  - performance
+  - aws
+  - network-monitoring
+  - vpc-flow-logs
+  - traffic-mirroring
+  - agentcore
+  client_id: 1so0mke5le9dhrbqrkaldkjl7j
+  discovery_url: https://cognito-idp.us-east-1.amazonaws.com/us-east-1_dTiygqXab/.well-known/openid-configuration
+  identity_group: a2a-performance-888627818870-486b3980
+  scope: netops-a2a-server-486b3980/gateway:read netops-a2a-server-486b3980/gateway:write
+agent_metadata:
+  capabilities:
+    push_notifications: true
+    streaming: true
+  description: Routes requests to a Bedrock AgentCore runtime that analyzes AWS network
+    performance issues, sets up monitoring infrastructure, and provides insights from
+    VPC Flow Logs, CloudWatch metrics, and traffic analysis.
+  name: Performance_Agent
+  supported_content_types:
+  - text/plain
+  version: 1.0.0
+agent_skills:
+- description: Analyzes AWS network performance issues including VPC Flow Logs, CloudWatch
+    metrics, traffic mirroring, TCP performance, and network flow monitoring. Provides
+    comprehensive performance analysis and troubleshooting capabilities.
+  examples:
+  - Analyze network performance for application with retransmission issues
+  - Set up traffic mirroring for deep packet inspection
+  - Check TCP performance between source and destination IPs
+  - Analyze network flow monitor data for performance bottlenecks
+  - Install network monitoring agents on EC2 instances
+  id: analyze_network_performance
+  name: Network Performance Analysis
+  tags:
+  - performance
+  - network-monitoring
+  - vpc-flow-logs
+  - traffic-mirroring
+  - tcp-analysis
+  - cloudwatch-metrics
+executor_config:
+  stream: true
+  request_timeout_s: 900
+server:
+  default_host: 0.0.0.0
+  default_port: 10006

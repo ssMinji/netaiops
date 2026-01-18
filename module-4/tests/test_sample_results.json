@@ -1,0 +1,82 @@
+{
+  "detailed_results": {
+    "PerformanceAgent": {
+      "judge_evaluation": {
+        "overall_score": 4.5,
+        "aggregate_scores": {
+          "helpfulness": {"score": 4.0},
+          "accuracy": {"score": 5.0},
+          "clarity": {"score": 5.0},
+          "professionalism": {"score": 5.0},
+          "completeness": {"score": 3.5}
+        },
+        "judge_evaluations": [
+          {
+            "test_case_id": "performance_basic_1",
+            "overall_score": 4.4
+          },
+          {
+            "test_case_id": "performance_retransmission_1",
+            "overall_score": 4.6
+          }
+        ]
+      },
+      "workflow": {
+        "test_results": [
+          {
+            "test_case_id": "performance_basic_1",
+            "query": "Analyze network performance issues in my VPC",
+            "response_time": 39.62,
+            "detected_tools": [{"toolName": "analyze_performance"}]
+          },
+          {
+            "test_case_id": "performance_retransmission_1",
+            "query": "I'm seeing high TCP retransmissions. Can you help identify the cause?",
+            "response_time": 130.94,
+            "detected_tools": [{"toolName": "tcp_analysis"}]
+          }
+        ]
+      },
+      "runtime_arn": "arn:aws:bedrock-agent-runtime:us-east-1:123456789012:agent/PERFORMANCE123"
+    },
+    "TroubleshootingAgent": {
+      "judge_evaluation": {
+        "overall_score": 4.0,
+        "aggregate_scores": {
+          "helpfulness": {"score": 3.5},
+          "accuracy": {"score": 4.5},
+          "clarity": {"score": 4.5},
+          "professionalism": {"score": 4.5},
+          "completeness": {"score": 3.0}
+        },
+        "judge_evaluations": [
+          {
+            "test_case_id": "connectivity_basic_1",
+            "overall_score": 3.2
+          },
+          {
+            "test_case_id": "connectivity_dns_1",
+            "overall_score": 4.8
+          }
+        ]
+      },
+      "workflow": {
+        "test_results": [
+          {
+            "test_case_id": "connectivity_basic_1",
+            "query": "Help me troubleshoot connectivity issues with my EC2 instance",
+            "response_time": 15.70,
+            "detected_tools": []
+          },
+          {
+            "test_case_id": "connectivity_dns_1",
+            "query": "My instance cannot resolve DNS names. What should I check?",
+            "response_time": 12.69,
+            "detected_tools": []
+          }
+        ]
+      },
+      "runtime_arn": "arn:aws:bedrock-agent-runtime:us-east-1:123456789012:agent/TROUBLESHOOT456"
+    }
+  }
+}

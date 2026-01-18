@@ -1,0 +1,1998 @@
+AWSTemplateFormatVersion: '2010-09-09'
+# ============================================================================
+# 모듈 3 & 4 설치 설정
+# 이 템플릿은 S3에서 module-3.zip과 module-4.zip을 다운로드하여
+# Bastion 및 Reporting 인스턴스에 설치합니다.
+# 배포 순서: 2c단계 (sample-application 이후, 독립적으로 배포 가능)
+# ============================================================================
+Description: 'Setup Module 3 Performance Agent and Module 4 - Downloads module-3.zip and module-4.zip from S3 to Bastion and Reporting instances'
+
+Parameters:
+  SampleApplicationStackName:
+    Type: String
+    Default: 'sample-application'
+    Description: Name of the sample application CloudFormation stack
+  
+  S3BucketName:
+    Type: String
+    Default: 'ws-assets-prod-iad-r-iad-ed304a55c2ca1aee'
+    Description: S3 bucket containing the module files
+  
+  S3KeyPath:
+    Type: String
+    Default: '175c4803-9b26-4229-a39d-16d9ebdf4aab/netops-zip-files/module-3.zip'
+    Description: S3 key path to the module-3.zip file
+  
+  S3KeyPathModule4:
+    Type: String
+    Default: '175c4803-9b26-4229-a39d-16d9ebdf4aab/netops-zip-files/module-4.zip'
+    Description: S3 key path to the module-4.zip file
+  
+  TargetDirectory:
+    Type: String
+    Default: '/root'
+    Description: Target directory where modules will be extracted
+
+Resources:
+  # IAM Role for Download Lambda function
+  Module3DownloadLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: SSMAccessPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:SendCommand
+                  - ssm:GetCommandInvocation
+                  - ssm:ListCommandInvocations
+                  - cloudformation:DescribeStacks
+                  - cloudformation:ListStackResources
+                Resource: '*'
+
+  # Lambda function to download and extract module-3.zip (Step 0 only)
+  Module3DownloadLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: Module3DownloadFunction
+      Runtime: python3.11
+      Handler: index.lambda_handler
+      Role: !GetAtt Module3DownloadLambdaRole.Arn
+      Timeout: 900
+      MemorySize: 256
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import urllib3
+          import time
+          
+          ssm_client = boto3.client('ssm')
+          cfn_client = boto3.client('cloudformation')
+          http = urllib3.PoolManager()
+          
+          def send_response(event, context, response_status, response_data):
+              response_body = json.dumps({
+                  'Status': response_status,
+                  'Reason': 'See CloudWatch Log Stream: ' + context.log_stream_name,
+                  'PhysicalResourceId': context.log_stream_name,
+                  'StackId': event['StackId'],
+                  'RequestId': event['RequestId'],
+                  'LogicalResourceId': event['LogicalResourceId'],
+                  'Data': response_data
+              })
+              
+              headers = {
+                  'Content-Type': 'application/json',
+                  'Content-Length': str(len(response_body))
+              }
+              
+              try:
+                  response = http.request('PUT', event['ResponseURL'], 
+                                        body=response_body, 
+                                        headers=headers)
+                  print('CloudFormation response status: ' + str(response.status))
+              except Exception as e:
+                  print('Failed to send response to CloudFormation: ' + str(e))
+          
+          def get_bastion_instance_id(stack_name):
+              """Get BastionInstanceId from the sample application stack"""
+              try:
+                  response = cfn_client.describe_stacks(StackName=stack_name)
+                  if response['Stacks']:
+                      outputs = response['Stacks'][0].get('Outputs', [])
+                      for output in outputs:
+                          if output['OutputKey'] == 'BastionInstanceId':
+                              return output['OutputValue']
+                  return None
+              except Exception as e:
+                  print('Error getting bastion instance ID: ' + str(e))
+                  return None
+          
+          def get_reporting_instance_id(stack_name):
+              """Get ReportingInstanceId from the sample application stack"""
+              try:
+                  response = cfn_client.describe_stacks(StackName=stack_name)
+                  if response['Stacks']:
+                      outputs = response['Stacks'][0].get('Outputs', [])
+                      for output in outputs:
+                          if output['OutputKey'] == 'ReportingInstanceId':
+                              return output['OutputValue']
+                  return None
+              except Exception as e:
+                  print('Error getting reporting instance ID: ' + str(e))
+                  return None
+          
+          def run_ssm_command(instance_id, command, step_name, timeout=300):
+              """Run a single SSM command and wait for completion"""
+              try:
+                  print('\n=== Executing ' + step_name + ' ===')
+                  print('Command: ' + command[:200] + '...')
+                  
+                  response = ssm_client.send_command(
+                      InstanceIds=[instance_id],
+                      DocumentName='AWS-RunShellScript',
+                      Parameters={
+                          'commands': [command],
+                          'executionTimeout': [str(timeout)]
+                      },
+                      TimeoutSeconds=timeout,
+                      CloudWatchOutputConfig={
+                          'CloudWatchLogGroupName': '/aws/ssm/module-3-download',
+                          'CloudWatchOutputEnabled': True
+                      }
+                  )
+                  
+                  command_id = response['Command']['CommandId']
+                  print('SSM Command ID: ' + command_id)
+                  
+                  # Wait for command completion
+                  max_attempts = timeout // 5
+                  for attempt in range(max_attempts):
+                      time.sleep(5)
+                      try:
+                          invocation = ssm_client.get_command_invocation(
+                              CommandId=command_id,
+                              InstanceId=instance_id
+                          )
+                          status = invocation['Status']
+                          
+                          if status in ['Success', 'Failed', 'Cancelled', 'TimedOut']:
+                              if status == 'Success':
+                                  print('? ' + step_name + ' completed successfully')
+                                  output = invocation.get('StandardOutputContent', '')
+                                  if output:
+                                      print('Output (first 2000 chars): ' + output[:2000])
+                                      print('Output (last 1000 chars): ' + output[-1000:])
+                                  return True
+                              else:
+                                  error = invocation.get('StandardErrorContent', 'Unknown error')
+                                  output = invocation.get('StandardOutputContent', '')
+                                  print('? ' + step_name + ' failed with status: ' + status)
+                                  print('Error (first 1000 chars): ' + error[:1000])
+                                  print('Output (first 1000 chars): ' + output[:1000])
+                                  return False
+                      except Exception as e:
+                          if 'InvocationDoesNotExist' not in str(e):
+                              print('Waiting for command completion: ' + str(e))
+                  
+                  print('? ' + step_name + ' timed out')
+                  return False
+                  
+              except Exception as e:
+                  print('? Error executing ' + step_name + ': ' + str(e))
+                  return False
+          
+          def run_ssm_command_with_retry(instance_id, command, step_name, timeout=300, max_retries=3, backoff_factor=2):
+              """Run SSM command with exponential backoff retry logic"""
+              retry_count = 0
+              wait_time = 30  # Initial wait time in seconds
+              
+              while retry_count < max_retries:
+                  try:
+                      print('\n=== Attempt ' + str(retry_count + 1) + ' of ' + str(max_retries) + ' for ' + step_name + ' ===')
+                      
+                      if run_ssm_command(instance_id, command, step_name, timeout):
+                          print('? ' + step_name + ' succeeded on attempt ' + str(retry_count + 1))
+                          return True
+                      
+                      retry_count += 1
+                      
+                      if retry_count < max_retries:
+                          print('??  ' + step_name + ' failed. Retrying in ' + str(wait_time) + ' seconds...')
+                          time.sleep(wait_time)
+                          wait_time *= backoff_factor  # Exponential backoff
+                      else:
+                          print('? ' + step_name + ' failed after ' + str(max_retries) + ' attempts')
+                          return False
+                          
+                  except Exception as e:
+                      print('? Retry mechanism error for ' + step_name + ': ' + str(e))
+                      retry_count += 1
+                      
+                      if retry_count < max_retries:
+                          print('??  Retrying in ' + str(wait_time) + ' seconds...')
+                          time.sleep(wait_time)
+                          wait_time *= backoff_factor
+                      else:
+                          return False
+              
+              return False
+          
+          def lambda_handler(event, context):
+              print('Received event: ' + json.dumps(event))
+              
+              try:
+                  request_type = event['RequestType']
+                  
+                  if request_type == 'Delete':
+                      send_response(event, context, 'SUCCESS', {'Message': 'Resource deletion successful'})
+                      return
+                  
+                  if request_type in ['Create', 'Update']:
+                      # Get parameters
+                      stack_name = event['ResourceProperties']['SampleApplicationStackName']
+                      bucket_name = event['ResourceProperties']['S3BucketName']
+                      s3_key = event['ResourceProperties']['S3KeyPath']
+                      target_dir = event['ResourceProperties']['TargetDirectory']
+                      
+                      # Get Bastion instance ID from stack outputs
+                      bastion_instance_id = get_bastion_instance_id(stack_name)
+                      if not bastion_instance_id:
+                          raise Exception('Could not find BastionInstanceId in stack ' + stack_name)
+                      
+                      print('Using Bastion instance: ' + bastion_instance_id)
+                      
+                      # Get Reporting instance ID from stack outputs
+                      reporting_instance_id = get_reporting_instance_id(stack_name)
+                      if not reporting_instance_id:
+                          raise Exception('Could not find ReportingInstanceId in stack ' + stack_name)
+                      
+                      print('Using Reporting instance: ' + reporting_instance_id)
+                      
+                      # Step 0: Download and extract module-3.zip on Bastion instance
+                      download_command = "#!/bin/bash\n"
+                      download_command += "# Redirect all output to log file\n"
+                      download_command += "LOG_FILE='/var/log/module-3-download.log'\n"
+                      download_command += "exec > >(tee -a $LOG_FILE) 2>&1\n"
+                      download_command += "echo \"=== Module 3 Download Started at $(date) ===\"\n"
+                      download_command += "set -x  # Enable debug mode\n"
+                      download_command += "sudo su - <<'EOF'\n"
+                      download_command += "# Redirect all output to log file in root context\n"
+                      download_command += "LOG_FILE='/var/log/module-3-download.log'\n"
+                      download_command += "exec > >(tee -a $LOG_FILE) 2>&1\n"
+                      download_command += "set -x  # Enable debug mode in root shell\n"
+                      download_command += "\n"
+                      download_command += "# Function to handle errors\n"
+                      download_command += "handle_error() {\n"
+                      download_command += "  echo \"========================================\"\n"
+                      download_command += "  echo \"ERROR at line $1: $2\"\n"
+                      download_command += "  echo \"Current directory: $(pwd)\"\n"
+                      download_command += "  echo \"Current user: $(whoami)\"\n"
+                      download_command += "  echo \"========================================\"\n"
+                      download_command += "  exit 1\n"
+                      download_command += "}\n"
+                      download_command += "\n"
+                      download_command += "TARGET_DIR='" + target_dir + "'\n"
+                      download_command += "\n"
+                      download_command += "echo '========================================'\n"
+                      download_command += "echo '=== Step 0: Download and extract module-3.zip ==='\n"
+                      download_command += "echo 'Current user:' $(whoami)\n"
+                      download_command += "echo 'Current directory:' $(pwd)\n"
+                      download_command += "echo 'Downloading from: https://ws-assets-prod-iad-r-iad-ed304a55c2ca1aee.s3.us-east-1.amazonaws.com/175c4803-9b26-4229-a39d-16d9ebdf4aab/netops-zip-files/module-3.zip'\n"
+                      download_command += "echo '========================================'\n"
+                      download_command += "\n"
+                      download_command += "# Check if curl is available\n"
+                      download_command += "if ! command -v curl &> /dev/null; then\n"
+                      download_command += "  handle_error $LINENO 'curl command not found. Installing curl...'\n"
+                      download_command += "fi\n"
+                      download_command += "\n"
+                      download_command += "# Download with curl\n"
+                      download_command += "echo 'Starting download...'\n"
+                      download_command += "curl -f -L --max-time 300 --connect-timeout 30 -o /tmp/module-3.zip https://" + bucket_name + ".s3.us-east-1.amazonaws.com/" + s3_key + "\n"
+                      download_command += "CURL_EXIT_CODE=$?\n"
+                      download_command += "echo \"Curl completed with exit code: $CURL_EXIT_CODE\"\n"
+                      download_command += "\n"
+                      download_command += "if [ $CURL_EXIT_CODE -ne 0 ]; then\n"
+                      download_command += "  echo \"ERROR: curl failed with exit code $CURL_EXIT_CODE\"\n"
+                      download_command += "  echo 'Curl exit codes: 6=DNS, 7=Connection, 22=HTTP error, 28=Timeout'\n"
+                      download_command += "  echo 'Checking if file was partially downloaded:'\n"
+                      download_command += "  ls -lh /tmp/module-3.zip 2>&1 || echo 'File does not exist'\n"
+                      download_command += "  handle_error $LINENO \"curl download failed with code $CURL_EXIT_CODE\"\n"
+                      download_command += "fi\n"
+                      download_command += "\n"
+                      download_command += "echo '========================================'\n"
+                      download_command += "echo 'Download completed successfully'\n"
+                      download_command += "echo 'File size:'\n"
+                      download_command += "ls -lh /tmp/module-3.zip || handle_error $LINENO 'Downloaded file not found'\n"
+                      download_command += "echo '========================================'\n"
+                      download_command += "\n"
+                      download_command += "echo '========================================'\n"
+                      download_command += "echo 'Extracting module-3.zip to /root/'\n"
+                      download_command += "# Remove existing directories if they exist\n"
+                      download_command += "rm -rf /root/module-3 /root/workshop-module-3 2>&1 || true\n"
+                      download_command += "# Extract zip file to /root/, excluding __MACOSX files\n"
+                      download_command += "unzip -o -q /tmp/module-3.zip -d /root -x '__MACOSX/*' '*/._*' 2>&1 || true\n"
+                      download_command += "echo 'Extraction command completed'\n"
+                      download_command += "# Verify extraction created module-3 directory\n"
+                      download_command += "if [ -d /root/module-3 ]; then\n"
+                      download_command += "  echo 'SUCCESS: Files extracted to /root/module-3'\n"
+                      download_command += "  echo 'Top-level contents of /root/module-3:'\n"
+                      download_command += "  ls -1 /root/module-3/ | head -10\n"
+                      download_command += "  # Rename module-3 to workshop-module-3\n"
+                      download_command += "  echo 'Renaming /root/module-3 to /root/workshop-module-3'\n"
+                      download_command += "  mv /root/module-3 /root/workshop-module-3 || handle_error $LINENO 'Failed to rename module-3 to workshop-module-3'\n"
+                      download_command += "  echo 'SUCCESS: Renamed to /root/workshop-module-3'\n"
+                      download_command += "else\n"
+                      download_command += "  echo 'ERROR: /root/module-3 directory not found after extraction'\n"
+                      download_command += "  echo 'Contents of /root:'\n"
+                      download_command += "  ls -1 /root/ | head -20\n"
+                      download_command += "  handle_error $LINENO 'Extraction failed - module-3 directory not created'\n"
+                      download_command += "fi\n"
+                      download_command += "echo 'Extraction and rename completed successfully'\n"
+                      download_command += "echo '========================================'\n"
+                      download_command += "\n"
+                      download_command += "# Verify agentcore-performance-agent exists\n"
+                      download_command += "if [ ! -d /root/workshop-module-3/agentcore-performance-agent ]; then\n"
+                      download_command += "  echo 'ERROR: agentcore-performance-agent directory not found'\n"
+                      download_command += "  echo 'Contents of /root/workshop-module-3:'\n"
+                      download_command += "  ls -1 /root/workshop-module-3/\n"
+                      download_command += "  handle_error $LINENO 'agentcore-performance-agent directory not found'\n"
+                      download_command += "fi\n"
+                      download_command += "echo 'Verified: agentcore-performance-agent directory exists'\n"
+                      download_command += "\n"
+                      download_command += "# Set permissions\n"
+                      download_command += "chmod -R 755 /root/workshop-module-3 2>&1 || true\n"
+                      download_command += "echo '========================================'\n"
+                      download_command += "echo '? Module 3 download and extraction completed successfully on Bastion'\n"
+                      download_command += "echo '========================================'\n"
+                      download_command += "EOF\n"
+                      
+                      if not run_ssm_command_with_retry(bastion_instance_id, download_command, "Module 3 Download on Bastion", 600, max_retries=3):
+                          raise Exception("Module 3 download failed on Bastion instance after multiple retry attempts")
+                      
+                      print('\n=== MODULE 3 DOWNLOAD COMPLETED ON BASTION ===')
+                      
+                      # Now download and extract on Reporting instance
+                      reporting_download_command = "#!/bin/bash\n"
+                      reporting_download_command += "# Redirect all output to log file\n"
+                      reporting_download_command += "LOG_FILE='/var/log/module-3-download.log'\n"
+                      reporting_download_command += "exec > >(tee -a $LOG_FILE) 2>&1\n"
+                      reporting_download_command += "echo \"=== Module 3 Download Started at $(date) ===\"\n"
+                      reporting_download_command += "set -x  # Enable debug mode\n"
+                      reporting_download_command += "sudo su - <<'EOF'\n"
+                      reporting_download_command += "# Redirect all output to log file in root context\n"
+                      reporting_download_command += "LOG_FILE='/var/log/module-3-download.log'\n"
+                      reporting_download_command += "exec > >(tee -a $LOG_FILE) 2>&1\n"
+                      reporting_download_command += "set -x  # Enable debug mode in root shell\n"
+                      reporting_download_command += "\n"
+                      reporting_download_command += "# Function to handle errors\n"
+                      reporting_download_command += "handle_error() {\n"
+                      reporting_download_command += "  echo \"========================================\"\n"
+                      reporting_download_command += "  echo \"ERROR at line $1: $2\"\n"
+                      reporting_download_command += "  echo \"Current directory: $(pwd)\"\n"
+                      reporting_download_command += "  echo \"Current user: $(whoami)\"\n"
+                      reporting_download_command += "  echo \"========================================\"\n"
+                      reporting_download_command += "  exit 1\n"
+                      reporting_download_command += "}\n"
+                      reporting_download_command += "\n"
+                      reporting_download_command += "TARGET_DIR='" + target_dir + "'\n"
+                      reporting_download_command += "\n"
+                      reporting_download_command += "echo '========================================'\n"
+                      reporting_download_command += "echo '=== Step 0: Download and extract module-3.zip ==='\n"
+                      reporting_download_command += "echo 'Current user:' $(whoami)\n"
+                      reporting_download_command += "echo 'Current directory:' $(pwd)\n"
+                      reporting_download_command += "echo 'Downloading from: https://ws-assets-prod-iad-r-iad-ed304a55c2ca1aee.s3.us-east-1.amazonaws.com/175c4803-9b26-4229-a39d-16d9ebdf4aab/netops-zip-files/module-3.zip'\n"
+                      reporting_download_command += "echo '========================================'\n"
+                      reporting_download_command += "\n"
+                      reporting_download_command += "# Check if curl is available\n"
+                      reporting_download_command += "if ! command -v curl &> /dev/null; then\n"
+                      reporting_download_command += "  echo 'curl command not found. Installing curl...'\n"
+                      reporting_download_command += "  yum install -y curl 2>&1 || handle_error $LINENO 'Failed to install curl'\n"
+                      reporting_download_command += "fi\n"
+                      reporting_download_command += "\n"
+                      reporting_download_command += "# Download with curl\n"
+                      reporting_download_command += "echo 'Starting download...'\n"
+                      reporting_download_command += "curl -f -L --max-time 300 --connect-timeout 30 -o /tmp/module-3.zip https://ws-assets-prod-iad-r-iad-ed304a55c2ca1aee.s3.us-east-1.amazonaws.com/175c4803-9b26-4229-a39d-16d9ebdf4aab/netops-zip-files/module-3.zip\n"
+                      reporting_download_command += "CURL_EXIT_CODE=$?\n"
+                      reporting_download_command += "echo \"Curl completed with exit code: $CURL_EXIT_CODE\"\n"
+                      reporting_download_command += "\n"
+                      reporting_download_command += "if [ $CURL_EXIT_CODE -ne 0 ]; then\n"
+                      reporting_download_command += "  echo \"ERROR: curl failed with exit code $CURL_EXIT_CODE\"\n"
+                      reporting_download_command += "  echo 'Curl exit codes: 6=DNS, 7=Connection, 22=HTTP error, 28=Timeout'\n"
+                      reporting_download_command += "  echo 'Checking if file was partially downloaded:'\n"
+                      reporting_download_command += "  ls -lh /tmp/module-3.zip 2>&1 || echo 'File does not exist'\n"
+                      reporting_download_command += "  handle_error $LINENO \"curl download failed with code $CURL_EXIT_CODE\"\n"
+                      reporting_download_command += "fi\n"
+                      reporting_download_command += "\n"
+                      reporting_download_command += "echo '========================================'\n"
+                      reporting_download_command += "echo 'Download completed successfully'\n"
+                      reporting_download_command += "echo 'File size:'\n"
+                      reporting_download_command += "ls -lh /tmp/module-3.zip || handle_error $LINENO 'Downloaded file not found'\n"
+                      reporting_download_command += "echo '========================================'\n"
+                      reporting_download_command += "\n"
+                      reporting_download_command += "echo '========================================'\n"
+                      reporting_download_command += "echo 'Extracting module-3.zip to /root/'\n"
+                      reporting_download_command += "# Remove existing directories if they exist\n"
+                      reporting_download_command += "rm -rf /root/module-3 /root/workshop-module-3 2>&1 || true\n"
+                      reporting_download_command += "# Extract zip file to /root/, excluding __MACOSX files\n"
+                      reporting_download_command += "unzip -o -q /tmp/module-3.zip -d /root -x '__MACOSX/*' '*/._*' 2>&1 || true\n"
+                      reporting_download_command += "echo 'Extraction command completed'\n"
+                      reporting_download_command += "# Verify extraction created module-3 directory\n"
+                      reporting_download_command += "if [ -d /root/module-3 ]; then\n"
+                      reporting_download_command += "  echo 'SUCCESS: Files extracted to /root/module-3'\n"
+                      reporting_download_command += "  echo 'Top-level contents of /root/module-3:'\n"
+                      reporting_download_command += "  ls -1 /root/module-3/ | head -10\n"
+                      reporting_download_command += "  # Rename module-3 to workshop-module-3\n"
+                      reporting_download_command += "  echo 'Renaming /root/module-3 to /root/workshop-module-3'\n"
+                      reporting_download_command += "  mv /root/module-3 /root/workshop-module-3 || handle_error $LINENO 'Failed to rename module-3 to workshop-module-3'\n"
+                      reporting_download_command += "  echo 'SUCCESS: Renamed to /root/workshop-module-3'\n"
+                      reporting_download_command += "else\n"
+                      reporting_download_command += "  echo 'ERROR: /root/module-3 directory not found after extraction'\n"
+                      reporting_download_command += "  echo 'Contents of /root:'\n"
+                      reporting_download_command += "  ls -1 /root/ | head -20\n"
+                      reporting_download_command += "  handle_error $LINENO 'Extraction failed - module-3 directory not created'\n"
+                      reporting_download_command += "fi\n"
+                      reporting_download_command += "echo 'Extraction and rename completed successfully'\n"
+                      reporting_download_command += "echo '========================================'\n"
+                      reporting_download_command += "\n"
+                      reporting_download_command += "# Set permissions\n"
+                      reporting_download_command += "chmod -R 755 /root/workshop-module-3 2>&1 || true\n"
+                      reporting_download_command += "echo '========================================'\n"
+                      reporting_download_command += "echo '? Module 3 download and extraction completed successfully on Reporting instance'\n"
+                      reporting_download_command += "echo '========================================'\n"
+                      reporting_download_command += "EOF\n"
+                      
+                      if not run_ssm_command_with_retry(reporting_instance_id, reporting_download_command, "Module 3 Download on Reporting Instance", 600, max_retries=3):
+                          raise Exception("Module 3 download failed on Reporting instance after multiple retry attempts")
+                      
+                      print('\n=== MODULE 3 DOWNLOAD COMPLETED ON BOTH INSTANCES ===')
+                      
+                      # Get module-4 parameters
+                      s3_key_module4 = event['ResourceProperties']['S3KeyPathModule4']
+                      
+                      # Now download and extract module-4.zip on Bastion instance
+                      print('\n=== STARTING MODULE 4 DOWNLOAD ON BASTION INSTANCE ===')
+                      
+                      module4_download_command = "#!/bin/bash\n"
+                      module4_download_command += "# Redirect all output to log file\n"
+                      module4_download_command += "LOG_FILE='/var/log/module-4-download.log'\n"
+                      module4_download_command += "exec > >(tee -a $LOG_FILE) 2>&1\n"
+                      module4_download_command += "echo \"=== Module 4 Download Started at $(date) ===\"\n"
+                      module4_download_command += "set -x  # Enable debug mode\n"
+                      module4_download_command += "sudo su - <<'EOF'\n"
+                      module4_download_command += "# Redirect all output to log file in root context\n"
+                      module4_download_command += "LOG_FILE='/var/log/module-4-download.log'\n"
+                      module4_download_command += "exec > >(tee -a $LOG_FILE) 2>&1\n"
+                      module4_download_command += "set -x  # Enable debug mode in root shell\n"
+                      module4_download_command += "\n"
+                      module4_download_command += "# Function to handle errors\n"
+                      module4_download_command += "handle_error() {\n"
+                      module4_download_command += "  echo \"========================================\"\n"
+                      module4_download_command += "  echo \"ERROR at line $1: $2\"\n"
+                      module4_download_command += "  echo \"Current directory: $(pwd)\"\n"
+                      module4_download_command += "  echo \"Current user: $(whoami)\"\n"
+                      module4_download_command += "  echo \"========================================\"\n"
+                      module4_download_command += "  exit 1\n"
+                      module4_download_command += "}\n"
+                      module4_download_command += "\n"
+                      module4_download_command += "echo '========================================'\n"
+                      module4_download_command += "echo '=== Download and extract module-4.zip ==='\n"
+                      module4_download_command += "echo 'Downloading from: https://" + bucket_name + ".s3.us-east-1.amazonaws.com/" + s3_key_module4 + "'\n"
+                      module4_download_command += "echo '========================================'\n"
+                      module4_download_command += "\n"
+                      module4_download_command += "curl -f -L --max-time 300 --connect-timeout 30 -o /tmp/module-4.zip https://" + bucket_name + ".s3.us-east-1.amazonaws.com/" + s3_key_module4 + "\n"
+                      module4_download_command += "CURL_EXIT_CODE=$?\n"
+                      module4_download_command += "if [ $CURL_EXIT_CODE -ne 0 ]; then\n"
+                      module4_download_command += "  handle_error $LINENO \"curl download failed with code $CURL_EXIT_CODE\"\n"
+                      module4_download_command += "fi\n"
+                      module4_download_command += "\n"
+                      module4_download_command += "echo 'Download completed successfully'\n"
+                      module4_download_command += "ls -lh /tmp/module-4.zip || handle_error $LINENO 'Downloaded file not found'\n"
+                      module4_download_command += "\n"
+                      module4_download_command += "echo 'Extracting module-4.zip to /root/'\n"
+                      module4_download_command += "rm -rf /root/module-4 /root/workshop-module-4 2>&1 || true\n"
+                      module4_download_command += "unzip -o -q /tmp/module-4.zip -d /root -x '__MACOSX/*' '*/._*' 2>&1 || true\n"
+                      module4_download_command += "\n"
+                      module4_download_command += "if [ -d /root/module-4 ]; then\n"
+                      module4_download_command += "  mv /root/module-4 /root/workshop-module-4 || handle_error $LINENO 'Failed to rename module-4'\n"
+                      module4_download_command += "  echo 'SUCCESS: Renamed to /root/workshop-module-4'\n"
+                      module4_download_command += "else\n"
+                      module4_download_command += "  handle_error $LINENO 'module-4 directory not created'\n"
+                      module4_download_command += "fi\n"
+                      module4_download_command += "\n"
+                      module4_download_command += "chmod -R 755 /root/workshop-module-4 2>&1 || true\n"
+                      module4_download_command += "echo '? Module 4 download completed on Bastion'\n"
+                      module4_download_command += "EOF\n"
+                      
+                      if not run_ssm_command_with_retry(bastion_instance_id, module4_download_command, "Module 4 Download on Bastion", 600, max_retries=3):
+                          raise Exception("Module 4 download failed on Bastion instance")
+                      
+                      # Now download and extract module-4.zip on Reporting instance
+                      print('\n=== STARTING MODULE 4 DOWNLOAD ON REPORTING INSTANCE ===')
+                      
+                      module4_reporting_download_command = "#!/bin/bash\n"
+                      module4_reporting_download_command += "LOG_FILE='/var/log/module-4-download.log'\n"
+                      module4_reporting_download_command += "exec > >(tee -a $LOG_FILE) 2>&1\n"
+                      module4_reporting_download_command += "echo \"=== Module 4 Download Started at $(date) ===\"\n"
+                      module4_reporting_download_command += "set -x\n"
+                      module4_reporting_download_command += "sudo su - <<'EOF'\n"
+                      module4_reporting_download_command += "LOG_FILE='/var/log/module-4-download.log'\n"
+                      module4_reporting_download_command += "exec > >(tee -a $LOG_FILE) 2>&1\n"
+                      module4_reporting_download_command += "set -x\n"
+                      module4_reporting_download_command += "\n"
+                      module4_reporting_download_command += "handle_error() {\n"
+                      module4_reporting_download_command += "  echo \"ERROR at line $1: $2\"\n"
+                      module4_reporting_download_command += "  exit 1\n"
+                      module4_reporting_download_command += "}\n"
+                      module4_reporting_download_command += "\n"
+                      module4_reporting_download_command += "echo '=== Download and extract module-4.zip ==='\n"
+                      module4_reporting_download_command += "curl -f -L --max-time 300 --connect-timeout 30 -o /tmp/module-4.zip https://" + bucket_name + ".s3.us-east-1.amazonaws.com/" + s3_key_module4 + "\n"
+                      module4_reporting_download_command += "CURL_EXIT_CODE=$?\n"
+                      module4_reporting_download_command += "if [ $CURL_EXIT_CODE -ne 0 ]; then\n"
+                      module4_reporting_download_command += "  handle_error $LINENO \"curl failed with code $CURL_EXIT_CODE\"\n"
+                      module4_reporting_download_command += "fi\n"
+                      module4_reporting_download_command += "\n"
+                      module4_reporting_download_command += "ls -lh /tmp/module-4.zip || handle_error $LINENO 'File not found'\n"
+                      module4_reporting_download_command += "rm -rf /root/module-4 /root/workshop-module-4 2>&1 || true\n"
+                      module4_reporting_download_command += "unzip -o -q /tmp/module-4.zip -d /root -x '__MACOSX/*' '*/._*' 2>&1 || true\n"
+                      module4_reporting_download_command += "\n"
+                      module4_reporting_download_command += "if [ -d /root/module-4 ]; then\n"
+                      module4_reporting_download_command += "  mv /root/module-4 /root/workshop-module-4 || handle_error $LINENO 'Failed to rename'\n"
+                      module4_reporting_download_command += "else\n"
+                      module4_reporting_download_command += "  handle_error $LINENO 'module-4 not created'\n"
+                      module4_reporting_download_command += "fi\n"
+                      module4_reporting_download_command += "\n"
+                      module4_reporting_download_command += "chmod -R 755 /root/workshop-module-4 2>&1 || true\n"
+                      module4_reporting_download_command += "echo '? Module 4 download completed on Reporting'\n"
+                      module4_reporting_download_command += "EOF\n"
+                      
+                      if not run_ssm_command_with_retry(reporting_instance_id, module4_reporting_download_command, "Module 4 Download on Reporting", 600, max_retries=3):
+                          raise Exception("Module 4 download failed on Reporting instance")
+                      
+                      print('\n=== MODULE 3 AND MODULE 4 DOWNLOADS COMPLETED ON BOTH INSTANCES ===')
+                      
+                      send_response(event, context, 'SUCCESS', {
+                          'Message': 'Module 3 and Module 4 downloads completed successfully on both Bastion and Reporting instances',
+                          'BastionInstanceId': bastion_instance_id,
+                          'ReportingInstanceId': reporting_instance_id,
+                          'TargetDirectory': target_dir
+                      })
+                      return
+                  
+              except Exception as e:
+                  print('Error: ' + str(e))
+                  send_response(event, context, 'FAILED', {'Message': str(e)})
+
+  # Custom resource to trigger the download
+  Module3DownloadCustomResource:
+    Type: Custom::Module3Download
+    Properties:
+      ServiceToken: !GetAtt Module3DownloadLambda.Arn
+      SampleApplicationStackName: !Ref SampleApplicationStackName
+      S3BucketName: !Ref S3BucketName
+      S3KeyPath: !Ref S3KeyPath
+      S3KeyPathModule4: !Ref S3KeyPathModule4
+      TargetDirectory: !Ref TargetDirectory
+
+  # IAM Role for Lambda function
+  Module3SetupLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: SSMAccessPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:SendCommand
+                  - ssm:GetCommandInvocation
+                  - ssm:ListCommandInvocations
+                  - cloudformation:DescribeStacks
+                  - cloudformation:ListStackResources
+                Resource: '*'
+
+  # Lambda function to orchestrate the setup via SSM commands
+  Module3SetupLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: Module3SetupFunction
+      Runtime: python3.11
+      Handler: index.lambda_handler
+      Role: !GetAtt Module3SetupLambdaRole.Arn
+      Timeout: 900
+      MemorySize: 256
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import urllib3
+          import time
+          
+          ssm_client = boto3.client('ssm')
+          cfn_client = boto3.client('cloudformation')
+          http = urllib3.PoolManager()
+          
+          def send_response(event, context, response_status, response_data):
+              response_body = json.dumps({
+                  'Status': response_status,
+                  'Reason': 'See CloudWatch Log Stream: ' + context.log_stream_name,
+                  'PhysicalResourceId': context.log_stream_name,
+                  'StackId': event['StackId'],
+                  'RequestId': event['RequestId'],
+                  'LogicalResourceId': event['LogicalResourceId'],
+                  'Data': response_data
+              })
+              
+              headers = {
+                  'Content-Type': 'application/json',
+                  'Content-Length': str(len(response_body))
+              }
+              
+              try:
+                  response = http.request('PUT', event['ResponseURL'], 
+                                        body=response_body, 
+                                        headers=headers)
+                  print('CloudFormation response status: ' + str(response.status))
+              except Exception as e:
+                  print('Failed to send response to CloudFormation: ' + str(e))
+          
+          def get_bastion_instance_id(stack_name):
+              """Get BastionInstanceId from the sample application stack"""
+              try:
+                  response = cfn_client.describe_stacks(StackName=stack_name)
+                  if response['Stacks']:
+                      outputs = response['Stacks'][0].get('Outputs', [])
+                      for output in outputs:
+                          if output['OutputKey'] == 'BastionInstanceId':
+                              return output['OutputValue']
+                  return None
+              except Exception as e:
+                  print('Error getting bastion instance ID: ' + str(e))
+                  return None
+          
+          def get_reporting_instance_id(stack_name):
+              """Get ReportingInstanceId from the sample application stack"""
+              try:
+                  response = cfn_client.describe_stacks(StackName=stack_name)
+                  if response['Stacks']:
+                      outputs = response['Stacks'][0].get('Outputs', [])
+                      for output in outputs:
+                          if output['OutputKey'] == 'ReportingInstanceId':
+                              return output['OutputValue']
+                  return None
+              except Exception as e:
+                  print('Error getting reporting instance ID: ' + str(e))
+                  return None
+          
+          def run_ssm_command(instance_id, command, step_name, timeout=300):
+              """Run a single SSM command and wait for completion"""
+              try:
+                  print('\n=== Executing ' + step_name + ' ===')
+                  print('Command: ' + command[:200] + '...')
+                  
+                  response = ssm_client.send_command(
+                      InstanceIds=[instance_id],
+                      DocumentName='AWS-RunShellScript',
+                      Parameters={
+                          'commands': [command],
+                          'executionTimeout': [str(timeout)]
+                      },
+                      TimeoutSeconds=timeout,
+                      CloudWatchOutputConfig={
+                          'CloudWatchLogGroupName': '/aws/ssm/module-3-setup',
+                          'CloudWatchOutputEnabled': True
+                      }
+                  )
+                  
+                  command_id = response['Command']['CommandId']
+                  print('SSM Command ID: ' + command_id)
+                  
+                  # Wait for command completion
+                  max_attempts = timeout // 5
+                  for attempt in range(max_attempts):
+                      time.sleep(5)
+                      try:
+                          invocation = ssm_client.get_command_invocation(
+                              CommandId=command_id,
+                              InstanceId=instance_id
+                          )
+                          status = invocation['Status']
+                          
+                          if status in ['Success', 'Failed', 'Cancelled', 'TimedOut']:
+                              if status == 'Success':
+                                  print('? ' + step_name + ' completed successfully')
+                                  output = invocation.get('StandardOutputContent', '')
+                                  if output:
+                                      print('Output (first 2000 chars): ' + output[:2000])
+                                      print('Output (last 1000 chars): ' + output[-1000:])
+                                  return True
+                              else:
+                                  error = invocation.get('StandardErrorContent', 'Unknown error')
+                                  output = invocation.get('StandardOutputContent', '')
+                                  print('? ' + step_name + ' failed with status: ' + status)
+                                  print('Error (first 1000 chars): ' + error[:1000])
+                                  print('Output (first 1000 chars): ' + output[:1000])
+                                  return False
+                      except Exception as e:
+                          if 'InvocationDoesNotExist' not in str(e):
+                              print('Waiting for command completion: ' + str(e))
+                  
+                  print('? ' + step_name + ' timed out')
+                  return False
+                  
+              except Exception as e:
+                  print('? Error executing ' + step_name + ': ' + str(e))
+                  return False
+          
+          def run_ssm_command_with_retry(instance_id, command, step_name, timeout=300, max_retries=3, backoff_factor=2):
+              """Run SSM command with exponential backoff retry logic"""
+              retry_count = 0
+              wait_time = 30  # Initial wait time in seconds
+              
+              while retry_count < max_retries:
+                  try:
+                      print('\n=== Attempt ' + str(retry_count + 1) + ' of ' + str(max_retries) + ' for ' + step_name + ' ===')
+                      
+                      if run_ssm_command(instance_id, command, step_name, timeout):
+                          print('? ' + step_name + ' succeeded on attempt ' + str(retry_count + 1))
+                          return True
+                      
+                      retry_count += 1
+                      
+                      if retry_count < max_retries:
+                          print('??  ' + step_name + ' failed. Retrying in ' + str(wait_time) + ' seconds...')
+                          time.sleep(wait_time)
+                          wait_time *= backoff_factor  # Exponential backoff
+                      else:
+                          print('? ' + step_name + ' failed after ' + str(max_retries) + ' attempts')
+                          return False
+                          
+                  except Exception as e:
+                      print('? Retry mechanism error for ' + step_name + ': ' + str(e))
+                      retry_count += 1
+                      
+                      if retry_count < max_retries:
+                          print('??  Retrying in ' + str(wait_time) + ' seconds...')
+                          time.sleep(wait_time)
+                          wait_time *= backoff_factor
+                      else:
+                          return False
+              
+              return False
+          
+          def lambda_handler(event, context):
+              print('Received event: ' + json.dumps(event))
+              
+              try:
+                  request_type = event['RequestType']
+                  
+                  if request_type == 'Delete':
+                      send_response(event, context, 'SUCCESS', {'Message': 'Resource deletion successful'})
+                      return
+                  
+                  if request_type in ['Create', 'Update']:
+                      # Get parameters
+                      stack_name = event['ResourceProperties']['SampleApplicationStackName']
+                      bucket_name = event['ResourceProperties']['S3BucketName']
+                      s3_key = event['ResourceProperties']['S3KeyPath']
+                      s3_key_module4 = event['ResourceProperties']['S3KeyPathModule4']
+                      target_dir = event['ResourceProperties']['TargetDirectory']
+                      
+                      # Get Bastion instance ID from stack outputs
+                      bastion_instance_id = get_bastion_instance_id(stack_name)
+                      if not bastion_instance_id:
+                          raise Exception('Could not find BastionInstanceId in stack ' + stack_name)
+                      
+                      print('Using Bastion instance: ' + bastion_instance_id)
+                      
+                      # Get Reporting instance ID from stack outputs
+                      reporting_instance_id = get_reporting_instance_id(stack_name)
+                      if not reporting_instance_id:
+                          raise Exception('Could not find ReportingInstanceId in stack ' + stack_name)
+                      
+                      print('Using Reporting instance: ' + reporting_instance_id)
+                      
+                      # All Steps Combined: Download, Extract, and Execute Steps 0-7
+                      all_steps_command = "#!/bin/bash\n"
+                      all_steps_command += "# Redirect all output to log file\n"
+                      all_steps_command += "LOG_FILE='/var/log/module-3-setup.log'\n"
+                      all_steps_command += "exec > >(tee -a $LOG_FILE) 2>&1\n"
+                      all_steps_command += "echo \"=== Module 3 Setup Started at $(date) ===\"\n"
+                      all_steps_command += "set -x  # Enable debug mode\n"
+                      all_steps_command += "sudo su - <<'EOF'\n"
+                      all_steps_command += "# Redirect all output to log file in root context\n"
+                      all_steps_command += "LOG_FILE='/var/log/module-3-setup.log'\n"
+                      all_steps_command += "exec > >(tee -a $LOG_FILE) 2>&1\n"
+                      all_steps_command += "set -x  # Enable debug mode in root shell\n"
+                      all_steps_command += "\n"
+                      all_steps_command += "# Function to handle errors\n"
+                      all_steps_command += "handle_error() {\n"
+                      all_steps_command += "  echo \"========================================\"\n"
+                      all_steps_command += "  echo \"ERROR at line $1: $2\"\n"
+                      all_steps_command += "  echo \"Current directory: $(pwd)\"\n"
+                      all_steps_command += "  echo \"Current user: $(whoami)\"\n"
+                      all_steps_command += "  echo \"========================================\"\n"
+                      all_steps_command += "  exit 1\n"
+                      all_steps_command += "}\n"
+                      all_steps_command += "\n"
+                      all_steps_command += "TARGET_DIR='" + target_dir + "'\n"
+                      all_steps_command += "\n"
+                      all_steps_command += "echo '========================================'\n"
+                      all_steps_command += "echo '=== Verifying module-3 files (downloaded by previous Lambda) ==='\n"
+                      all_steps_command += "echo 'Current user:' $(whoami)\n"
+                      all_steps_command += "echo 'Current directory:' $(pwd)\n"
+                      all_steps_command += "echo '========================================'\n"
+                      all_steps_command += "\n"
+                      all_steps_command += "# Verify that module-3 was already downloaded and extracted\n"
+                      all_steps_command += "if [ ! -d /root/workshop-module-3 ]; then\n"
+                      all_steps_command += "  echo 'ERROR: /root/workshop-module-3 directory not found'\n"
+                      all_steps_command += "  echo 'This directory should have been created by the download Lambda'\n"
+                      all_steps_command += "  echo 'Contents of /root:'\n"
+                      all_steps_command += "  ls -1 /root/ | head -20\n"
+                      all_steps_command += "  handle_error $LINENO 'workshop-module-3 directory not found - download Lambda may have failed'\n"
+                      all_steps_command += "fi\n"
+                      all_steps_command += "\n"
+                      all_steps_command += "# Verify agentcore-performance-agent exists\n"
+                      all_steps_command += "if [ ! -d /root/workshop-module-3/agentcore-performance-agent ]; then\n"
+                      all_steps_command += "  echo 'ERROR: agentcore-performance-agent directory not found'\n"
+                      all_steps_command += "  echo 'Contents of /root/workshop-module-3:'\n"
+                      all_steps_command += "  ls -1 /root/workshop-module-3/\n"
+                      all_steps_command += "  handle_error $LINENO 'agentcore-performance-agent directory not found'\n"
+                      all_steps_command += "fi\n"
+                      all_steps_command += "echo 'Verified: Files from download Lambda are present'\n"
+                      all_steps_command += "echo '========================================'\n"
+                      all_steps_command += "\n"
+                      all_steps_command += "echo '========================================'\n"
+                      all_steps_command += "echo 'Locating agentcore-performance-agent directory'\n"
+                      all_steps_command += "# Try to find agentcore-performance-agent directory in /root\n"
+                      all_steps_command += "if [ -d /root/workshop-module-3/agentcore-performance-agent ]; then\n"
+                      all_steps_command += "  echo 'Found at /root/workshop-module-3/agentcore-performance-agent'\n"
+                      all_steps_command += "  cd /root/workshop-module-3/agentcore-performance-agent || handle_error $LINENO 'Failed to cd to /root/workshop-module-3/agentcore-performance-agent'\n"
+                      all_steps_command += "elif [ -d /root/workshop-module-3/workshop-module-3/agentcore-performance-agent ]; then\n"
+                      all_steps_command += "  echo 'Found at /root/workshop-module-3/workshop-module-3/agentcore-performance-agent'\n"
+                      all_steps_command += "  cd /root/workshop-module-3/workshop-module-3/agentcore-performance-agent || handle_error $LINENO 'Failed to cd to /root/workshop-module-3/workshop-module-3/agentcore-performance-agent'\n"
+                      all_steps_command += "else\n"
+                      all_steps_command += "  echo 'ERROR: Cannot find agentcore-performance-agent directory'\n"
+                      all_steps_command += "  echo 'Searching for it:'\n"
+                      all_steps_command += "  find /root/workshop-module-3 -name agentcore-performance-agent -type d 2>&1\n"
+                      all_steps_command += "  handle_error $LINENO 'Cannot find agentcore-performance-agent directory in /root/workshop-module-3'\n"
+                      all_steps_command += "fi\n"
+                      all_steps_command += "\n"
+                      all_steps_command += "echo \"Current directory: $(pwd)\"\n"
+                      all_steps_command += "echo 'Contents of current directory:'\n"
+                      all_steps_command += "ls -la\n"
+                      all_steps_command += "echo '========================================'\n"
+                      all_steps_command += "\n"
+                      all_steps_command += "echo '========================================'\n"
+                      all_steps_command += "echo '=== Step 2: Setup Dependencies ==='\n"
+                      all_steps_command += "echo '========================================'\n"
+                      all_steps_command += "if [ -f ./scripts/setup-dependencies.sh ]; then\n"
+                      all_steps_command += "  chmod +x ./scripts/setup-dependencies.sh\n"
+                      all_steps_command += "else\n"
+                      all_steps_command += "  echo 'WARNING: setup-dependencies.sh not found, skipping...'\n"
+                      all_steps_command += "fi\n"
+                      all_steps_command += "./scripts/setup-dependencies.sh 2>&1 || { echo 'Failed at Step 2'; exit 1; }\n"
+                      all_steps_command += "\n"
+                      all_steps_command += "echo '========================================'\n"
+                      all_steps_command += "echo '=== Step 3: Deploy Infrastructure ==='\n"
+                      all_steps_command += "echo '========================================'\n"
+                      all_steps_command += "chmod +x ./scripts/prereq.sh\n"
+                      all_steps_command += "./scripts/prereq.sh 2>&1 || { echo 'Failed at Step 3'; exit 1; }\n"
+                      all_steps_command += "\n"
+                      all_steps_command += "echo '========================================'\n"
+                      all_steps_command += "echo '=== Waiting for SSM parameters to propagate ==='\n"
+                      all_steps_command += "echo 'Waiting 45 seconds for eventual consistency and SSM parameter propagation...'\n"
+                      all_steps_command += "sleep 45\n"
+                      all_steps_command += "echo '========================================'\n"
+                      all_steps_command += "\n"
+                      all_steps_command += "echo '========================================'\n"
+                      all_steps_command += "echo '=== Setting up virtual environment ==='\n"
+                      all_steps_command += "echo '========================================'\n"
+                      all_steps_command += "if [ ! -d .venv ]; then\n"
+                      all_steps_command += "  python3 -m venv .venv\n"
+                      all_steps_command += "  source .venv/bin/activate\n"
+                      all_steps_command += "  pip install --upgrade pip --quiet\n"
+                      all_steps_command += "  pip install bedrock-agentcore>=0.1.1 pyyaml>=6.0 boto3>=1.34.0 requests>=2.31.0 --quiet\n"
+                      all_steps_command += "else\n"
+                      all_steps_command += "  source .venv/bin/activate\n"
+                      all_steps_command += "fi\n"
+                      all_steps_command += "\n"
+                      all_steps_command += "echo '========================================'\n"
+                      all_steps_command += "echo '=== Step 4: Install Docker ==='\n"
+                      all_steps_command += "echo '========================================'\n"
+                      all_steps_command += "if ! command -v docker &> /dev/null; then\n"
+                      all_steps_command += "  echo 'Installing Docker...'\n"
+                      all_steps_command += "  yum install -y docker 2>&1 || { echo 'Failed to install Docker'; exit 1; }\n"
+                      all_steps_command += "  systemctl start docker 2>&1 || { echo 'Failed to start Docker'; exit 1; }\n"
+                      all_steps_command += "  systemctl enable docker 2>&1 || true\n"
+                      all_steps_command += "  echo 'Docker installed and started successfully'\n"
+                      all_steps_command += "else\n"
+                      all_steps_command += "  echo 'Docker already installed'\n"
+                      all_steps_command += "  systemctl start docker 2>&1 || true\n"
+                      all_steps_command += "fi\n"
+                      all_steps_command += "docker --version\n"
+                      all_steps_command += "echo '========================================'\n"
+                      all_steps_command += "\n"
+                      all_steps_command += "echo '========================================'\n"
+                      all_steps_command += "echo '=== Step 4.5: Setup Authentication ==='\n"
+                      all_steps_command += "echo '========================================'\n"
+                      all_steps_command += "python3 scripts/cognito_credentials_provider.py create-provider 2>&1 || { echo 'Failed at Step 4.5'; exit 1; }\n"
+                      all_steps_command += "\n"
+                      all_steps_command += "echo '========================================'\n"
+                      all_steps_command += "echo '=== Step 5: Deploy Performance Tools ==='\n"
+                      all_steps_command += "echo '========================================'\n"
+                      all_steps_command += "if [ -f ./prerequisite/lambda-performance/deploy-performance-tools.sh ]; then\n"
+                      all_steps_command += "  chmod +x ./prerequisite/lambda-performance/deploy-performance-tools.sh\n"
+                      all_steps_command += "  ./prerequisite/lambda-performance/deploy-performance-tools.sh 2>&1 || { echo 'Failed at Step 5'; exit 1; }\n"
+                      all_steps_command += "else\n"
+                      all_steps_command += "  echo 'ERROR: deploy-performance-tools.sh not found at ./prerequisite/lambda-performance/'\n"
+                      all_steps_command += "  echo \"Current directory: $(pwd)\"\n"
+                      all_steps_command += "  echo 'Directory contents:'\n"
+                      all_steps_command += "  ls -laR ./prerequisite/ 2>&1 || echo 'prerequisite directory not found'\n"
+                      all_steps_command += "  handle_error $LINENO 'deploy-performance-tools.sh not found'\n"
+                      all_steps_command += "fi\n"
+                      all_steps_command += "\n"
+                      all_steps_command += "echo '========================================'\n"
+                      all_steps_command += "echo '=== Step 6: Setup Memory Configuration ==='\n"
+                      all_steps_command += "echo '========================================'\n"
+                      all_steps_command += "python3 scripts/setup_memory.py --action create 2>&1 || { echo 'Failed at Step 6'; exit 1; }\n"
+                      all_steps_command += "\n"
+                      all_steps_command += "echo '========================================'\n"
+                      all_steps_command += "echo '=== Step 7: Create Gateway and Runtime ==='\n"
+                      all_steps_command += "echo '========================================'\n"
+                      all_steps_command += "python3 scripts/agentcore_gateway.py create --name a2a-performance-gateway 2>&1 || { echo 'Failed at Step 7a'; exit 1; }\n"
+                      all_steps_command += "\n"
+                      all_steps_command += "# Exponential backoff for IAM role propagation\n"
+                      all_steps_command += "echo '========================================'\n"
+                      all_steps_command += "echo '=== Waiting for IAM role propagation with exponential backoff ==='\n"
+                      all_steps_command += "echo '========================================'\n"
+                      all_steps_command += "MAX_ATTEMPTS=5\n"
+                      all_steps_command += "ATTEMPT=1\n"
+                      all_steps_command += "WAIT_TIME=10\n"
+                      all_steps_command += "ROLE_NAME='performance-gateway-execution-role'\n"
+                      all_steps_command += "\n"
+                      all_steps_command += "while [ $ATTEMPT -le $MAX_ATTEMPTS ]; do\n"
+                      all_steps_command += "  echo \"? Attempt $ATTEMPT/$MAX_ATTEMPTS: Verifying IAM role readiness...\"\n"
+                      all_steps_command += "  \n"
+                      all_steps_command += "  # Check if role exists and has proper trust policy\n"
+                      all_steps_command += "  if aws iam get-role --role-name $ROLE_NAME &>/dev/null; then\n"
+                      all_steps_command += "    echo \"? Role $ROLE_NAME exists\"\n"
+                      all_steps_command += "    \n"
+                      all_steps_command += "    # Check attached policies\n"
+                      all_steps_command += "    POLICY_COUNT=$(aws iam list-attached-role-policies --role-name $ROLE_NAME --query 'length(AttachedPolicies)' --output text)\n"
+                      all_steps_command += "    echo \"? Attached policies: $POLICY_COUNT\"\n"
+                      all_steps_command += "    \n"
+                      all_steps_command += "    if [ $POLICY_COUNT -gt 0 ]; then\n"
+                      all_steps_command += "      echo \"? Role has attached policies - propagation complete\"\n"
+                      all_steps_command += "      echo \"? Total wait time: $((WAIT_TIME * (ATTEMPT - 1))) seconds\"\n"
+                      all_steps_command += "      break\n"
+                      all_steps_command += "    fi\n"
+                      all_steps_command += "  fi\n"
+                      all_steps_command += "  \n"
+                      all_steps_command += "  if [ $ATTEMPT -eq $MAX_ATTEMPTS ]; then\n"
+                      all_steps_command += "    echo \"??  Max attempts reached, proceeding anyway...\"\n"
+                      all_steps_command += "    break\n"
+                      all_steps_command += "  fi\n"
+                      all_steps_command += "  \n"
+                      all_steps_command += "  echo \"? Waiting $WAIT_TIME seconds before retry...\"\n"
+                      all_steps_command += "  sleep $WAIT_TIME\n"
+                      all_steps_command += "  \n"
+                      all_steps_command += "  # Exponential backoff: double the wait time\n"
+                      all_steps_command += "  WAIT_TIME=$((WAIT_TIME * 2))\n"
+                      all_steps_command += "  ATTEMPT=$((ATTEMPT + 1))\n"
+                      all_steps_command += "done\n"
+                      all_steps_command += "\n"
+                      all_steps_command += "echo '========================================'\n"
+                      all_steps_command += "echo '=== Creating AgentCore Runtime (with retry on IAM propagation errors) ==='\n"
+                      all_steps_command += "echo '========================================'\n"
+                      all_steps_command += "\n"
+                      all_steps_command += "# Retry logic for runtime creation (handles transient IAM propagation issues)\n"
+                      all_steps_command += "MAX_RUNTIME_ATTEMPTS=3\n"
+                      all_steps_command += "RUNTIME_ATTEMPT=1\n"
+                      all_steps_command += "RUNTIME_WAIT=30\n"
+                      all_steps_command += "\n"
+                      all_steps_command += "while [ $RUNTIME_ATTEMPT -le $MAX_RUNTIME_ATTEMPTS ]; do\n"
+                      all_steps_command += "  echo \"? Runtime creation attempt $RUNTIME_ATTEMPT/$MAX_RUNTIME_ATTEMPTS\"\n"
+                      all_steps_command += "  \n"
+                      all_steps_command += "  if python3 scripts/agentcore_agent_runtime.py create --name a2a_performance_agent_runtime 2>&1; then\n"
+                      all_steps_command += "    echo \"? Runtime created successfully\"\n"
+                      all_steps_command += "    break\n"
+                      all_steps_command += "  else\n"
+                      all_steps_command += "    RUNTIME_EXIT_CODE=$?\n"
+                      all_steps_command += "    echo \"? Runtime creation failed with exit code: $RUNTIME_EXIT_CODE\"\n"
+                      all_steps_command += "    \n"
+                      all_steps_command += "    if [ $RUNTIME_ATTEMPT -eq $MAX_RUNTIME_ATTEMPTS ]; then\n"
+                      all_steps_command += "      echo \"? Max runtime attempts reached, giving up\"\n"
+                      all_steps_command += "      echo 'Failed at Step 7b'\n"
+                      all_steps_command += "      exit 1\n"
+                      all_steps_command += "    fi\n"
+                      all_steps_command += "    \n"
+                      all_steps_command += "    echo \"? Waiting $RUNTIME_WAIT seconds for IAM propagation before retry...\"\n"
+                      all_steps_command += "    sleep $RUNTIME_WAIT\n"
+                      all_steps_command += "    RUNTIME_WAIT=$((RUNTIME_WAIT * 2))\n"
+                      all_steps_command += "    RUNTIME_ATTEMPT=$((RUNTIME_ATTEMPT + 1))\n"
+                      all_steps_command += "  fi\n"
+                      all_steps_command += "done\n"
+                      all_steps_command += "\n"
+                      all_steps_command += "echo '========================================'\n"
+                      all_steps_command += "echo '? All setup steps completed successfully'\n"
+                      all_steps_command += "echo '========================================'\n"
+                      all_steps_command += "EOF\n"
+                      
+                      if not run_ssm_command_with_retry(bastion_instance_id, all_steps_command, "Module 3 Setup (Steps 0-7)", 900, max_retries=3):
+                          raise Exception("Module 3 setup failed on Bastion instance after multiple retry attempts")
+                      
+                      print('\n=== MODULE 3 BASTION SETUP COMPLETED SUCCESSFULLY ===')
+                      
+                      # Now setup module-3 on Reporting instance
+                      print('\n=== STARTING MODULE 3 SETUP ON REPORTING INSTANCE ===')
+                      
+                      reporting_setup_command = "#!/bin/bash\n"
+                      reporting_setup_command += "# Redirect all output to log file\n"
+                      reporting_setup_command += "LOG_FILE='/var/log/module-3-reporting-setup.log'\n"
+                      reporting_setup_command += "exec > >(tee -a $LOG_FILE) 2>&1\n"
+                      reporting_setup_command += "echo \"=== Module 3 Reporting Setup Started at $(date) ===\"\n"
+                      reporting_setup_command += "set -x  # Enable debug mode\n"
+                      reporting_setup_command += "sudo su - <<'EOF'\n"
+                      reporting_setup_command += "# Redirect all output to log file in root context\n"
+                      reporting_setup_command += "LOG_FILE='/var/log/module-3-reporting-setup.log'\n"
+                      reporting_setup_command += "exec > >(tee -a $LOG_FILE) 2>&1\n"
+                      reporting_setup_command += "set -x  # Enable debug mode in root shell\n"
+                      reporting_setup_command += "\n"
+                      reporting_setup_command += "# Function to handle errors\n"
+                      reporting_setup_command += "handle_error() {\n"
+                      reporting_setup_command += "  echo \"========================================\"\n"
+                      reporting_setup_command += "  echo \"ERROR at line $1: $2\"\n"
+                      reporting_setup_command += "  echo \"Current directory: $(pwd)\"\n"
+                      reporting_setup_command += "  echo \"Current user: $(whoami)\"\n"
+                      reporting_setup_command += "  echo \"========================================\"\n"
+                      reporting_setup_command += "  exit 1\n"
+                      reporting_setup_command += "}\n"
+                      reporting_setup_command += "\n"
+                      reporting_setup_command += "TARGET_DIR='" + target_dir + "'\n"
+                      reporting_setup_command += "\n"
+                      reporting_setup_command += "echo '========================================'\n"
+                      reporting_setup_command += "echo '=== Verifying module-3 files (downloaded by previous Lambda) ==='\n"
+                      reporting_setup_command += "echo 'Current user:' $(whoami)\n"
+                      reporting_setup_command += "echo 'Current directory:' $(pwd)\n"
+                      reporting_setup_command += "echo '========================================'\n"
+                      reporting_setup_command += "\n"
+                      reporting_setup_command += "# Verify that module-3 was already downloaded and extracted\n"
+                      reporting_setup_command += "if [ ! -d /root/workshop-module-3 ]; then\n"
+                      reporting_setup_command += "  echo 'ERROR: /root/workshop-module-3 directory not found'\n"
+                      reporting_setup_command += "  echo 'This directory should have been created by the download Lambda'\n"
+                      reporting_setup_command += "  echo 'Contents of /root:'\n"
+                      reporting_setup_command += "  ls -1 /root/ | head -20\n"
+                      reporting_setup_command += "  handle_error $LINENO 'workshop-module-3 directory not found - download Lambda may have failed'\n"
+                      reporting_setup_command += "fi\n"
+                      reporting_setup_command += "echo 'Verified: Files from download Lambda are present'\n"
+                      reporting_setup_command += "echo '========================================'\n"
+                      reporting_setup_command += "\n"
+                      reporting_setup_command += "echo '========================================'\n"
+                      reporting_setup_command += "echo '=== Installing MySQL Client (MariaDB) ==='\n"
+                      reporting_setup_command += "echo '========================================'\n"
+                      reporting_setup_command += "echo 'Installing MariaDB client (MySQL-compatible)...'\n"
+                      reporting_setup_command += "sudo dnf install -y mariadb105 2>&1 || { echo 'Failed to install MariaDB client'; exit 1; }\n"
+                      reporting_setup_command += "echo ''\n"
+                      reporting_setup_command += "echo 'Creating mysql symlink...'\n"
+                      reporting_setup_command += "sudo ln -sf /usr/bin/mariadb /usr/bin/mysql 2>&1 || true\n"
+                      reporting_setup_command += "echo ''\n"
+                      reporting_setup_command += "echo 'Verifying installation...'\n"
+                      reporting_setup_command += "mysql --version 2>&1 || echo 'mysql command not found'\n"
+                      reporting_setup_command += "mariadb --version 2>&1 || echo 'mariadb command not found'\n"
+                      reporting_setup_command += "echo ''\n"
+                      reporting_setup_command += "echo '? MySQL client installed successfully!'\n"
+                      reporting_setup_command += "echo '========================================'\n"
+                      reporting_setup_command += "\n"
+                      reporting_setup_command += "echo '========================================'\n"
+                      reporting_setup_command += "echo '? Module 3 setup on Reporting instance completed successfully'\n"
+                      reporting_setup_command += "echo 'Files are available at: /root/workshop-module-3'\n"
+                      reporting_setup_command += "echo '========================================'\n"
+                      reporting_setup_command += "EOF\n"
+                      
+                      if not run_ssm_command_with_retry(reporting_instance_id, reporting_setup_command, "Module 3 Reporting Instance Setup", 600, max_retries=3):
+                          raise Exception("Module 3 setup failed on Reporting instance after multiple retry attempts")
+                      
+                      print('\n=== MODULE 3 AND MODULE 4 SETUP COMPLETED SUCCESSFULLY ON BOTH INSTANCES ===')
+                      
+                      send_response(event, context, 'SUCCESS', {
+                          'Message': 'Module 3 and Module 4 setup completed successfully on both Bastion and Reporting instances',
+                          'BastionInstanceId': bastion_instance_id,
+                          'ReportingInstanceId': reporting_instance_id,
+                          'TargetDirectory': target_dir
+                      })
+                      return
+                  
+              except Exception as e:
+                  print('Error: ' + str(e))
+                  send_response(event, context, 'FAILED', {'Message': str(e)})
+
+  # Custom resource to trigger the setup
+  Module3SetupCustomResource:
+    Type: Custom::Module3Setup
+    DependsOn: Module3DownloadCustomResource
+    Properties:
+      ServiceToken: !GetAtt Module3SetupLambda.Arn
+      SampleApplicationStackName: !Ref SampleApplicationStackName
+      S3BucketName: !Ref S3BucketName
+      S3KeyPath: !Ref S3KeyPath
+      S3KeyPathModule4: !Ref S3KeyPathModule4
+      TargetDirectory: !Ref TargetDirectory
+
+  # S3 Bucket for baseline deployment artifacts
+  BaselineDeployBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub 'baseline-deploy-${AWS::AccountId}'
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags:
+        - Key: Purpose
+          Value: BaselineDeployment
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  # IAM Role for Lambda function
+  Module3ConnectivitySetupLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: SSMAccessPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:SendCommand
+                  - ssm:GetCommandInvocation
+                  - ssm:ListCommandInvocations
+                  - cloudformation:DescribeStacks
+                  - cloudformation:ListStackResources
+                Resource: '*'
+
+  # Lambda function to orchestrate the setup via SSM commands
+  Module3ConnectivitySetupLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: Module3ConnectivitySetupFunction
+      Runtime: python3.11
+      Handler: index.lambda_handler
+      Role: !GetAtt Module3ConnectivitySetupLambdaRole.Arn
+      Timeout: 900
+      MemorySize: 256
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import urllib3
+          import time
+          
+          ssm_client = boto3.client('ssm')
+          cfn_client = boto3.client('cloudformation')
+          http = urllib3.PoolManager()
+          
+          def send_response(event, context, response_status, response_data):
+              response_body = json.dumps({
+                  'Status': response_status,
+                  'Reason': 'See CloudWatch Log Stream: ' + context.log_stream_name,
+                  'PhysicalResourceId': context.log_stream_name,
+                  'StackId': event['StackId'],
+                  'RequestId': event['RequestId'],
+                  'LogicalResourceId': event['LogicalResourceId'],
+                  'Data': response_data
+              })
+              
+              headers = {
+                  'Content-Type': 'application/json',
+                  'Content-Length': str(len(response_body))
+              }
+              
+              try:
+                  response = http.request('PUT', event['ResponseURL'], 
+                                        body=response_body, 
+                                        headers=headers)
+                  print('CloudFormation response status: ' + str(response.status))
+              except Exception as e:
+                  print('Failed to send response to CloudFormation: ' + str(e))
+          
+          def get_bastion_instance_id(stack_name):
+              """Get BastionInstanceId from the sample application stack"""
+              try:
+                  response = cfn_client.describe_stacks(StackName=stack_name)
+                  if response['Stacks']:
+                      outputs = response['Stacks'][0].get('Outputs', [])
+                      for output in outputs:
+                          if output['OutputKey'] == 'BastionInstanceId':
+                              return output['OutputValue']
+                  return None
+              except Exception as e:
+                  print('Error getting bastion instance ID: ' + str(e))
+                  return None
+          
+          def run_ssm_command(instance_id, command, step_name, timeout=300):
+              """Run a single SSM command and wait for completion"""
+              try:
+                  print('\n=== Executing ' + step_name + ' ===')
+                  print('Command: ' + command[:200] + '...')
+                  
+                  response = ssm_client.send_command(
+                      InstanceIds=[instance_id],
+                      DocumentName='AWS-RunShellScript',
+                      Parameters={
+                          'commands': [command],
+                          'executionTimeout': [str(timeout)]
+                      },
+                      TimeoutSeconds=timeout,
+                      CloudWatchOutputConfig={
+                          'CloudWatchLogGroupName': '/aws/ssm/module-3-connectivity-setup',
+                          'CloudWatchOutputEnabled': True
+                      }
+                  )
+                  
+                  command_id = response['Command']['CommandId']
+                  print('SSM Command ID: ' + command_id)
+                  
+                  # Wait for command completion
+                  max_attempts = timeout // 5
+                  for attempt in range(max_attempts):
+                      time.sleep(5)
+                      try:
+                          invocation = ssm_client.get_command_invocation(
+                              CommandId=command_id,
+                              InstanceId=instance_id
+                          )
+                          status = invocation['Status']
+                          
+                          if status in ['Success', 'Failed', 'Cancelled', 'TimedOut']:
+                              if status == 'Success':
+                                  print('? ' + step_name + ' completed successfully')
+                                  output = invocation.get('StandardOutputContent', '')
+                                  if output:
+                                      print('Output (first 2000 chars): ' + output[:2000])
+                                      print('Output (last 1000 chars): ' + output[-1000:])
+                                  return True
+                              else:
+                                  error = invocation.get('StandardErrorContent', 'Unknown error')
+                                  output = invocation.get('StandardOutputContent', '')
+                                  print('? ' + step_name + ' failed with status: ' + status)
+                                  print('Error (first 1000 chars): ' + error[:1000])
+                                  print('Output (first 1000 chars): ' + output[:1000])
+                                  return False
+                      except Exception as e:
+                          if 'InvocationDoesNotExist' not in str(e):
+                              print('Waiting for command completion: ' + str(e))
+                  
+                  print('? ' + step_name + ' timed out')
+                  return False
+                  
+              except Exception as e:
+                  print('? Error executing ' + step_name + ': ' + str(e))
+                  return False
+          
+          def run_ssm_command_with_retry(instance_id, command, step_name, timeout=300, max_retries=3, backoff_factor=2):
+              """Run SSM command with exponential backoff retry logic"""
+              retry_count = 0
+              wait_time = 30  # Initial wait time in seconds
+              
+              while retry_count < max_retries:
+                  try:
+                      print('\n=== Attempt ' + str(retry_count + 1) + ' of ' + str(max_retries) + ' for ' + step_name + ' ===')
+                      
+                      if run_ssm_command(instance_id, command, step_name, timeout):
+                          print('? ' + step_name + ' succeeded on attempt ' + str(retry_count + 1))
+                          return True
+                      
+                      retry_count += 1
+                      
+                      if retry_count < max_retries:
+                          print('??  ' + step_name + ' failed. Retrying in ' + str(wait_time) + ' seconds...')
+                          time.sleep(wait_time)
+                          wait_time *= backoff_factor  # Exponential backoff
+                      else:
+                          print('? ' + step_name + ' failed after ' + str(max_retries) + ' attempts')
+                          return False
+                          
+                  except Exception as e:
+                      print('? Retry mechanism error for ' + step_name + ': ' + str(e))
+                      retry_count += 1
+                      
+                      if retry_count < max_retries:
+                          print('??  Retrying in ' + str(wait_time) + ' seconds...')
+                          time.sleep(wait_time)
+                          wait_time *= backoff_factor
+                      else:
+                          return False
+              
+              return False
+          
+          def lambda_handler(event, context):
+              print('Received event: ' + json.dumps(event))
+              
+              try:
+                  request_type = event['RequestType']
+                  
+                  if request_type == 'Delete':
+                      send_response(event, context, 'SUCCESS', {'Message': 'Resource deletion successful'})
+                      return
+                  
+                  if request_type in ['Create', 'Update']:
+                      # Get parameters
+                      stack_name = event['ResourceProperties']['SampleApplicationStackName']
+                      bucket_name = event['ResourceProperties']['S3BucketName']
+                      s3_key = event['ResourceProperties']['S3KeyPath']
+                      target_dir = event['ResourceProperties']['TargetDirectory']
+                      
+                      # Get Bastion instance ID from stack outputs
+                      instance_id = get_bastion_instance_id(stack_name)
+                      if not instance_id:
+                          raise Exception('Could not find BastionInstanceId in stack ' + stack_name)
+                      
+                      print('Using Bastion instance: ' + instance_id)
+                      
+                      # All Steps Combined: Download, Extract, and Execute Connectivity Setup Steps
+                      all_steps_command = "#!/bin/bash\n"
+                      all_steps_command += "# Redirect all output to log file\n"
+                      all_steps_command += "LOG_FILE='/var/log/module-3-connectivity-setup.log'\n"
+                      all_steps_command += "exec > >(tee -a $LOG_FILE) 2>&1\n"
+                      all_steps_command += "echo \"=== Module 3 Connectivity Setup Started at $(date) ===\"\n"
+                      all_steps_command += "set -x  # Enable debug mode\n"
+                      all_steps_command += "sudo su - <<'EOF'\n"
+                      all_steps_command += "# Redirect all output to log file in root context\n"
+                      all_steps_command += "LOG_FILE='/var/log/module-3-connectivity-setup.log'\n"
+                      all_steps_command += "exec > >(tee -a $LOG_FILE) 2>&1\n"
+                      all_steps_command += "set -x  # Enable debug mode in root shell\n"
+                      all_steps_command += "\n"
+                      all_steps_command += "# Function to handle errors\n"
+                      all_steps_command += "handle_error() {\n"
+                      all_steps_command += "  echo \"========================================\"\n"
+                      all_steps_command += "  echo \"ERROR at line $1: $2\"\n"
+                      all_steps_command += "  echo \"Current directory: $(pwd)\"\n"
+                      all_steps_command += "  echo \"Current user: $(whoami)\"\n"
+                      all_steps_command += "  echo \"========================================\"\n"
+                      all_steps_command += "  exit 1\n"
+                      all_steps_command += "}\n"
+                      all_steps_command += "\n"
+                      all_steps_command += "TARGET_DIR='" + target_dir + "'\n"
+                      all_steps_command += "\n"
+                      all_steps_command += "echo '========================================'\n"
+                      all_steps_command += "echo '=== Step 0: Verify module-3 files ==='\n"
+                      all_steps_command += "echo 'Current user:' $(whoami)\n"
+                      all_steps_command += "echo 'Current directory:' $(pwd)\n"
+                      all_steps_command += "echo '========================================'\n"
+                      all_steps_command += "\n"
+                      all_steps_command += "# Verify that module-3 was already downloaded and extracted by download Lambda\n"
+                      all_steps_command += "if [ ! -d /root/workshop-module-3 ]; then\n"
+                      all_steps_command += "  echo 'ERROR: /root/workshop-module-3 directory not found'\n"
+                      all_steps_command += "  echo 'This directory should have been created by the download Lambda'\n"
+                      all_steps_command += "  echo 'Contents of /root:'\n"
+                      all_steps_command += "  ls -1 /root/ | head -20\n"
+                      all_steps_command += "  handle_error $LINENO 'workshop-module-3 directory not found - download Lambda may have failed'\n"
+                      all_steps_command += "fi\n"
+                      all_steps_command += "echo 'Verified: /root/workshop-module-3 exists from download Lambda'\n"
+                      all_steps_command += "\n"
+                      all_steps_command += "# Verify agentcore-connectivity-agent exists\n"
+                      all_steps_command += "if [ ! -d /root/workshop-module-3/agentcore-connectivity-agent ]; then\n"
+                      all_steps_command += "  echo 'ERROR: agentcore-connectivity-agent directory not found'\n"
+                      all_steps_command += "  echo 'Contents of /root/workshop-module-3:'\n"
+                      all_steps_command += "  ls -1 /root/workshop-module-3/\n"
+                      all_steps_command += "  handle_error $LINENO 'agentcore-connectivity-agent directory not found'\n"
+                      all_steps_command += "fi\n"
+                      all_steps_command += "echo 'Verified: agentcore-connectivity-agent directory exists'\n"
+                      all_steps_command += "\n"
+                      all_steps_command += "# Set permissions\n"
+                      all_steps_command += "chmod -R 755 /root/workshop-module-3 2>&1 || true\n"
+                      all_steps_command += "echo '========================================'\n"
+                      all_steps_command += "\n"
+                      all_steps_command += "echo '========================================'\n"
+                      all_steps_command += "echo 'Locating agentcore-connectivity-agent directory'\n"
+                      all_steps_command += "# Try to find agentcore-connectivity-agent directory in /root\n"
+                      all_steps_command += "if [ -d /root/workshop-module-3/agentcore-connectivity-agent ]; then\n"
+                      all_steps_command += "  echo 'Found at /root/workshop-module-3/agentcore-connectivity-agent'\n"
+                      all_steps_command += "  cd /root/workshop-module-3/agentcore-connectivity-agent || handle_error $LINENO 'Failed to cd to /root/workshop-module-3/agentcore-connectivity-agent'\n"
+                      all_steps_command += "elif [ -d /root/workshop-module-3/workshop-module-3/agentcore-connectivity-agent ]; then\n"
+                      all_steps_command += "  echo 'Found at /root/workshop-module-3/workshop-module-3/agentcore-connectivity-agent'\n"
+                      all_steps_command += "  cd /root/workshop-module-3/workshop-module-3/agentcore-connectivity-agent || handle_error $LINENO 'Failed to cd to /root/workshop-module-3/workshop-module-3/agentcore-connectivity-agent'\n"
+                      all_steps_command += "else\n"
+                      all_steps_command += "  echo 'ERROR: Cannot find agentcore-connectivity-agent directory'\n"
+                      all_steps_command += "  echo 'Searching for it:'\n"
+                      all_steps_command += "  find /root/workshop-module-3 -name agentcore-connectivity-agent -type d 2>&1\n"
+                      all_steps_command += "  handle_error $LINENO 'Cannot find agentcore-connectivity-agent directory in /root/workshop-module-3'\n"
+                      all_steps_command += "fi\n"
+                      all_steps_command += "\n"
+                      all_steps_command += "echo \"Current directory: $(pwd)\"\n"
+                      all_steps_command += "echo 'Contents of current directory:'\n"
+                      all_steps_command += "ls -la\n"
+                      all_steps_command += "echo '========================================'\n"
+                      all_steps_command += "\n"
+                      all_steps_command += "echo '========================================'\n"
+                      all_steps_command += "echo '=== Step 3: Setup Dependencies ==='\n"
+                      all_steps_command += "echo '========================================'\n"
+                      all_steps_command += "if [ -f ./scripts/setup-dependencies.sh ]; then\n"
+                      all_steps_command += "  chmod +x ./scripts/setup-dependencies.sh\n"
+                      all_steps_command += "  ./scripts/setup-dependencies.sh 2>&1 || { echo 'Failed at Step 3'; exit 1; }\n"
+                      all_steps_command += "else\n"
+                      all_steps_command += "  echo 'WARNING: setup-dependencies.sh not found, skipping...'\n"
+                      all_steps_command += "fi\n"
+                      all_steps_command += "\n"
+                      all_steps_command += "echo '========================================'\n"
+                      all_steps_command += "echo '=== Step 4: Install Docker ==='\n"
+                      all_steps_command += "echo '========================================'\n"
+                      all_steps_command += "if ! command -v docker &> /dev/null; then\n"
+                      all_steps_command += "  echo 'Installing Docker...'\n"
+                      all_steps_command += "  yum install -y docker 2>&1 || { echo 'Failed to install Docker'; exit 1; }\n"
+                      all_steps_command += "  systemctl start docker 2>&1 || { echo 'Failed to start Docker'; exit 1; }\n"
+                      all_steps_command += "  systemctl enable docker 2>&1 || true\n"
+                      all_steps_command += "  echo 'Docker installed and started successfully'\n"
+                      all_steps_command += "else\n"
+                      all_steps_command += "  echo 'Docker already installed'\n"
+                      all_steps_command += "  systemctl start docker 2>&1 || true\n"
+                      all_steps_command += "fi\n"
+                      all_steps_command += "docker --version\n"
+                      all_steps_command += "echo '========================================'\n"
+                      all_steps_command += "\n"
+                      all_steps_command += "echo '========================================'\n"
+                      all_steps_command += "echo '=== Step 4.5: Setup Docker Authentication ==='\n"
+                      all_steps_command += "echo '========================================'\n"
+                      all_steps_command += "aws ecr-public get-login-password --region us-east-1 | docker login --username AWS --password-stdin public.ecr.aws 2>&1 || { echo 'Failed at Step 4.5'; exit 1; }\n"
+                      all_steps_command += "\n"
+                      all_steps_command += "echo '========================================'\n"
+                      all_steps_command += "echo '=== Step 5: Deploy DNS Resolution Tool ==='\n"
+                      all_steps_command += "echo '========================================'\n"
+                      all_steps_command += "if [ -f ./prerequisite/lambda-dns/deploy-dns-tool.sh ]; then\n"
+                      all_steps_command += "  chmod +x ./prerequisite/lambda-dns/deploy-dns-tool.sh\n"
+                      all_steps_command += "  cd prerequisite/lambda-dns && ./deploy-dns-tool.sh && cd ../.. 2>&1 || { echo 'Failed at Step 5'; exit 1; }\n"
+                      all_steps_command += "else\n"
+                      all_steps_command += "  echo 'ERROR: deploy-dns-tool.sh not found at ./prerequisite/lambda-dns/'\n"
+                      all_steps_command += "  echo \"Current directory: $(pwd)\"\n"
+                      all_steps_command += "  echo 'Directory contents:'\n"
+                      all_steps_command += "  ls -laR ./prerequisite/ 2>&1 || echo 'prerequisite directory not found'\n"
+                      all_steps_command += "  handle_error $LINENO 'deploy-dns-tool.sh not found'\n"
+                      all_steps_command += "fi\n"
+                      all_steps_command += "\n"
+                      all_steps_command += "echo '========================================'\n"
+                      all_steps_command += "echo '=== Step 10: Deploy Connectivity Fix Tool ==='\n"
+                      all_steps_command += "echo '========================================'\n"
+                      all_steps_command += "if [ -f ./prerequisite/lambda-fix/deploy-connectivity-fix-tool.sh ]; then\n"
+                      all_steps_command += "  chmod +x ./prerequisite/lambda-fix/deploy-connectivity-fix-tool.sh\n"
+                      all_steps_command += "  cd prerequisite/lambda-fix && ./deploy-connectivity-fix-tool.sh && cd ../.. 2>&1 || { echo 'Failed at Step 10'; exit 1; }\n"
+                      all_steps_command += "else\n"
+                      all_steps_command += "  echo 'ERROR: deploy-connectivity-fix-tool.sh not found at ./prerequisite/lambda-fix/'\n"
+                      all_steps_command += "  handle_error $LINENO 'deploy-connectivity-fix-tool.sh not found'\n"
+                      all_steps_command += "fi\n"
+                      all_steps_command += "\n"
+                      all_steps_command += "echo '========================================'\n"
+                      all_steps_command += "echo '=== Setting up virtual environment ==='\n"
+                      all_steps_command += "echo '========================================'\n"
+                      all_steps_command += "if [ ! -d .venv ]; then\n"
+                      all_steps_command += "  echo 'Creating new virtual environment...'\n"
+                      all_steps_command += "  python3 -m venv .venv 2>&1 || { echo 'Failed to create venv'; exit 1; }\n"
+                      all_steps_command += "  echo 'Activating virtual environment...'\n"
+                      all_steps_command += "  source .venv/bin/activate 2>&1 || { echo 'Failed to activate venv'; exit 1; }\n"
+                      all_steps_command += "  echo 'Upgrading pip...'\n"
+                      all_steps_command += "  pip install --upgrade pip --quiet 2>&1 || { echo 'Failed to upgrade pip'; exit 1; }\n"
+                      all_steps_command += "  echo 'Installing required packages...'\n"
+                      all_steps_command += "  pip install bedrock-agentcore>=0.1.1 pyyaml>=6.0 boto3>=1.34.0 requests>=2.31.0 --quiet 2>&1 || { echo 'Failed to install packages'; exit 1; }\n"
+                      all_steps_command += "  echo 'Virtual environment setup completed successfully'\n"
+                      all_steps_command += "else\n"
+                      all_steps_command += "  echo 'Virtual environment already exists, activating...'\n"
+                      all_steps_command += "  source .venv/bin/activate 2>&1 || { echo 'Failed to activate venv'; exit 1; }\n"
+                      all_steps_command += "  echo 'Virtual environment activated successfully'\n"
+                      all_steps_command += "fi\n"
+                      all_steps_command += "echo 'Python version:' $(python3 --version)\n"
+                      all_steps_command += "echo 'Pip version:' $(pip --version)\n"
+                      all_steps_command += "echo 'Installed packages:'\n"
+                      all_steps_command += "pip list | grep -E '(bedrock-agentcore|pyyaml|boto3|requests)' || echo 'Package list check failed'\n"
+                      all_steps_command += "echo '========================================'\n"
+                      all_steps_command += "\n"
+                      all_steps_command += "echo '========================================'\n"
+                      all_steps_command += "echo '=== Step 11: Setup Memory Configuration ==='\n"
+                      all_steps_command += "echo '========================================'\n"
+                      all_steps_command += "chmod +x scripts/setup_memory.py\n"
+                      all_steps_command += "python3 scripts/setup_memory.py 2>&1 || { echo 'Failed at Step 11'; exit 1; }\n"
+                      all_steps_command += "\n"
+                      all_steps_command += "echo '========================================'\n"
+                      all_steps_command += "echo '=== Step 12: Create Gateway and Runtime ==='\n"
+                      all_steps_command += "echo '========================================'\n"
+                      all_steps_command += "python3 scripts/agentcore_gateway.py create --name a2a-troubleshooting-gateway 2>&1 || { echo 'Failed at Step 12a'; exit 1; }\n"
+                      all_steps_command += "\n"
+                      all_steps_command += "# Exponential backoff for IAM role propagation\n"
+                      all_steps_command += "echo '========================================'\n"
+                      all_steps_command += "echo '=== Waiting for IAM role propagation with exponential backoff ==='\n"
+                      all_steps_command += "echo '========================================'\n"
+                      all_steps_command += "MAX_ATTEMPTS=5\n"
+                      all_steps_command += "ATTEMPT=1\n"
+                      all_steps_command += "WAIT_TIME=10\n"
+                      all_steps_command += "ROLE_NAME='performance-gateway-execution-role'\n"
+                      all_steps_command += "\n"
+                      all_steps_command += "while [ $ATTEMPT -le $MAX_ATTEMPTS ]; do\n"
+                      all_steps_command += "  echo \"? Attempt $ATTEMPT/$MAX_ATTEMPTS: Verifying IAM role readiness...\"\n"
+                      all_steps_command += "  \n"
+                      all_steps_command += "  # Check if role exists and has proper trust policy\n"
+                      all_steps_command += "  if aws iam get-role --role-name $ROLE_NAME &>/dev/null; then\n"
+                      all_steps_command += "    echo \"? Role $ROLE_NAME exists\"\n"
+                      all_steps_command += "    \n"
+                      all_steps_command += "    # Check attached policies\n"
+                      all_steps_command += "    POLICY_COUNT=$(aws iam list-attached-role-policies --role-name $ROLE_NAME --query 'length(AttachedPolicies)' --output text)\n"
+                      all_steps_command += "    echo \"? Attached policies: $POLICY_COUNT\"\n"
+                      all_steps_command += "    \n"
+                      all_steps_command += "    if [ $POLICY_COUNT -gt 0 ]; then\n"
+                      all_steps_command += "      echo \"? Role has attached policies - propagation complete\"\n"
+                      all_steps_command += "      echo \"? Total wait time: $((WAIT_TIME * (ATTEMPT - 1))) seconds\"\n"
+                      all_steps_command += "      break\n"
+                      all_steps_command += "    fi\n"
+                      all_steps_command += "  fi\n"
+                      all_steps_command += "  \n"
+                      all_steps_command += "  if [ $ATTEMPT -eq $MAX_ATTEMPTS ]; then\n"
+                      all_steps_command += "    echo \"??  Max attempts reached, proceeding anyway...\"\n"
+                      all_steps_command += "    break\n"
+                      all_steps_command += "  fi\n"
+                      all_steps_command += "  \n"
+                      all_steps_command += "  echo \"? Waiting $WAIT_TIME seconds before retry...\"\n"
+                      all_steps_command += "  sleep $WAIT_TIME\n"
+                      all_steps_command += "  \n"
+                      all_steps_command += "  # Exponential backoff: double the wait time\n"
+                      all_steps_command += "  WAIT_TIME=$((WAIT_TIME * 2))\n"
+                      all_steps_command += "  ATTEMPT=$((ATTEMPT + 1))\n"
+                      all_steps_command += "done\n"
+                      all_steps_command += "\n"
+                      all_steps_command += "echo '========================================'\n"
+                      all_steps_command += "echo '=== Creating AgentCore Runtime (with retry on IAM propagation errors) ==='\n"
+                      all_steps_command += "echo '========================================'\n"
+                      all_steps_command += "\n"
+                      all_steps_command += "# Retry logic for runtime creation (handles transient IAM propagation issues)\n"
+                      all_steps_command += "MAX_RUNTIME_ATTEMPTS=3\n"
+                      all_steps_command += "RUNTIME_ATTEMPT=1\n"
+                      all_steps_command += "RUNTIME_WAIT=30\n"
+                      all_steps_command += "\n"
+                      all_steps_command += "while [ $RUNTIME_ATTEMPT -le $MAX_RUNTIME_ATTEMPTS ]; do\n"
+                      all_steps_command += "  echo \"? Runtime creation attempt $RUNTIME_ATTEMPT/$MAX_RUNTIME_ATTEMPTS\"\n"
+                      all_steps_command += "  \n"
+                      all_steps_command += "  if python3 scripts/agentcore_agent_runtime.py create --name a2a_troubleshooting_agent_runtime 2>&1; then\n"
+                      all_steps_command += "    echo \"? Runtime created successfully\"\n"
+                      all_steps_command += "    break\n"
+                      all_steps_command += "  else\n"
+                      all_steps_command += "    RUNTIME_EXIT_CODE=$?\n"
+                      all_steps_command += "    echo \"? Runtime creation failed with exit code: $RUNTIME_EXIT_CODE\"\n"
+                      all_steps_command += "    \n"
+                      all_steps_command += "    if [ $RUNTIME_ATTEMPT -eq $MAX_RUNTIME_ATTEMPTS ]; then\n"
+                      all_steps_command += "      echo \"? Max runtime attempts reached, giving up\"\n"
+                      all_steps_command += "      echo 'Failed at Step 12b'\n"
+                      all_steps_command += "      exit 1\n"
+                      all_steps_command += "    fi\n"
+                      all_steps_command += "    \n"
+                      all_steps_command += "    echo \"? Waiting $RUNTIME_WAIT seconds for IAM propagation before retry...\"\n"
+                      all_steps_command += "    sleep $RUNTIME_WAIT\n"
+                      all_steps_command += "    RUNTIME_WAIT=$((RUNTIME_WAIT * 2))\n"
+                      all_steps_command += "    RUNTIME_ATTEMPT=$((RUNTIME_ATTEMPT + 1))\n"
+                      all_steps_command += "  fi\n"
+                      all_steps_command += "done\n"
+                      all_steps_command += "\n"
+                      all_steps_command += "echo '========================================'\n"
+                      all_steps_command += "echo '? All connectivity setup steps completed successfully'\n"
+                      all_steps_command += "echo '========================================'\n"
+                      all_steps_command += "EOF\n"
+                      
+                      if not run_ssm_command_with_retry(instance_id, all_steps_command, "Module 3 Connectivity Setup", 900, max_retries=3):
+                          raise Exception("Module 3 connectivity setup failed after multiple retry attempts")
+                      
+                      print('\n=== MODULE 3 CONNECTIVITY SETUP COMPLETED SUCCESSFULLY ===')
+                      send_response(event, context, 'SUCCESS', {
+                          'Message': 'Module 3 connectivity setup completed successfully',
+                          'InstanceId': instance_id,
+                          'TargetDirectory': target_dir
+                      })
+                      return
+                  
+              except Exception as e:
+                  print('Error: ' + str(e))
+                  send_response(event, context, 'FAILED', {'Message': str(e)})
+
+  # Custom resource to trigger the setup
+  Module3ConnectivitySetupCustomResource:
+    Type: Custom::Module3ConnectivitySetup
+    DependsOn: Module3SetupCustomResource
+    Properties:
+      ServiceToken: !GetAtt Module3ConnectivitySetupLambda.Arn
+      SampleApplicationStackName: !Ref SampleApplicationStackName
+      S3BucketName: !Ref S3BucketName
+      S3KeyPath: !Ref S3KeyPath
+      TargetDirectory: !Ref TargetDirectory
+
+  # IAM Role for A2A Deploy Preprovision Lambda function
+  Module3A2ADeployLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: SSMAccessPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:SendCommand
+                  - ssm:GetCommandInvocation
+                  - ssm:ListCommandInvocations
+                  - cloudformation:DescribeStacks
+                  - cloudformation:ListStackResources
+                Resource: '*'
+
+  # Lambda function to run A2A deploy-preprovision scripts
+  Module3A2ADeployLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: Module3A2ADeployFunction
+      Runtime: python3.11
+      Handler: index.lambda_handler
+      Role: !GetAtt Module3A2ADeployLambdaRole.Arn
+      Timeout: 900
+      MemorySize: 256
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import urllib3
+          import time
+          
+          ssm_client = boto3.client('ssm')
+          cfn_client = boto3.client('cloudformation')
+          http = urllib3.PoolManager()
+          
+          def send_response(event, context, response_status, response_data):
+              response_body = json.dumps({
+                  'Status': response_status,
+                  'Reason': 'See CloudWatch Log Stream: ' + context.log_stream_name,
+                  'PhysicalResourceId': context.log_stream_name,
+                  'StackId': event['StackId'],
+                  'RequestId': event['RequestId'],
+                  'LogicalResourceId': event['LogicalResourceId'],
+                  'Data': response_data
+              })
+              
+              headers = {
+                  'Content-Type': 'application/json',
+                  'Content-Length': str(len(response_body))
+              }
+              
+              try:
+                  response = http.request('PUT', event['ResponseURL'], 
+                                        body=response_body, 
+                                        headers=headers)
+                  print('CloudFormation response status: ' + str(response.status))
+              except Exception as e:
+                  print('Failed to send response to CloudFormation: ' + str(e))
+          
+          def get_bastion_instance_id(stack_name):
+              """Get BastionInstanceId from the sample application stack"""
+              try:
+                  response = cfn_client.describe_stacks(StackName=stack_name)
+                  if response['Stacks']:
+                      outputs = response['Stacks'][0].get('Outputs', [])
+                      for output in outputs:
+                          if output['OutputKey'] == 'BastionInstanceId':
+                              return output['OutputValue']
+                  return None
+              except Exception as e:
+                  print('Error getting bastion instance ID: ' + str(e))
+                  return None
+          
+          def run_ssm_command(instance_id, command, step_name, timeout=300):
+              """Run a single SSM command and wait for completion"""
+              try:
+                  print('\n=== Executing ' + step_name + ' ===')
+                  print('Command: ' + command[:200] + '...')
+                  
+                  response = ssm_client.send_command(
+                      InstanceIds=[instance_id],
+                      DocumentName='AWS-RunShellScript',
+                      Parameters={
+                          'commands': [command],
+                          'executionTimeout': [str(timeout)]
+                      },
+                      TimeoutSeconds=timeout,
+                      CloudWatchOutputConfig={
+                          'CloudWatchLogGroupName': '/aws/ssm/module-3-a2a-deploy',
+                          'CloudWatchOutputEnabled': True
+                      }
+                  )
+                  
+                  command_id = response['Command']['CommandId']
+                  print('SSM Command ID: ' + command_id)
+                  
+                  # Wait for command completion
+                  max_attempts = timeout // 5
+                  for attempt in range(max_attempts):
+                      time.sleep(5)
+                      try:
+                          invocation = ssm_client.get_command_invocation(
+                              CommandId=command_id,
+                              InstanceId=instance_id
+                          )
+                          status = invocation['Status']
+                          
+                          if status in ['Success', 'Failed', 'Cancelled', 'TimedOut']:
+                              if status == 'Success':
+                                  print('? ' + step_name + ' completed successfully')
+                                  output = invocation.get('StandardOutputContent', '')
+                                  if output:
+                                      print('Output (first 2000 chars): ' + output[:2000])
+                                      print('Output (last 1000 chars): ' + output[-1000:])
+                                  return True
+                              else:
+                                  error = invocation.get('StandardErrorContent', 'Unknown error')
+                                  output = invocation.get('StandardOutputContent', '')
+                                  print('? ' + step_name + ' failed with status: ' + status)
+                                  print('Error (first 1000 chars): ' + error[:1000])
+                                  print('Output (first 1000 chars): ' + output[:1000])
+                                  return False
+                      except Exception as e:
+                          if 'InvocationDoesNotExist' not in str(e):
+                              print('Waiting for command completion: ' + str(e))
+                  
+                  print('? ' + step_name + ' timed out')
+                  return False
+                  
+              except Exception as e:
+                  print('? Error executing ' + step_name + ': ' + str(e))
+                  return False
+          
+          def run_ssm_command_with_retry(instance_id, command, step_name, timeout=300, max_retries=3, backoff_factor=2):
+              """Run SSM command with exponential backoff retry logic"""
+              retry_count = 0
+              wait_time = 30  # Initial wait time in seconds
+              
+              while retry_count < max_retries:
+                  try:
+                      print('\n=== Attempt ' + str(retry_count + 1) + ' of ' + str(max_retries) + ' for ' + step_name + ' ===')
+                      
+                      if run_ssm_command(instance_id, command, step_name, timeout):
+                          print('? ' + step_name + ' succeeded on attempt ' + str(retry_count + 1))
+                          return True
+                      
+                      retry_count += 1
+                      
+                      if retry_count < max_retries:
+                          print('??  ' + step_name + ' failed. Retrying in ' + str(wait_time) + ' seconds...')
+                          time.sleep(wait_time)
+                          wait_time *= backoff_factor  # Exponential backoff
+                      else:
+                          print('? ' + step_name + ' failed after ' + str(max_retries) + ' attempts')
+                          return False
+                          
+                  except Exception as e:
+                      print('? Retry mechanism error for ' + step_name + ': ' + str(e))
+                      retry_count += 1
+                      
+                      if retry_count < max_retries:
+                          print('??  Retrying in ' + str(wait_time) + ' seconds...')
+                          time.sleep(wait_time)
+                          wait_time *= backoff_factor
+                      else:
+                          return False
+              
+              return False
+          
+          def lambda_handler(event, context):
+              print('Received event: ' + json.dumps(event))
+              
+              try:
+                  request_type = event['RequestType']
+                  
+                  if request_type == 'Delete':
+                      send_response(event, context, 'SUCCESS', {'Message': 'Resource deletion successful'})
+                      return
+                  
+                  if request_type in ['Create', 'Update']:
+                      # Get parameters
+                      stack_name = event['ResourceProperties']['SampleApplicationStackName']
+                      target_dir = event['ResourceProperties']['TargetDirectory']
+                      
+                      # Get Bastion instance ID from stack outputs
+                      instance_id = get_bastion_instance_id(stack_name)
+                      if not instance_id:
+                          raise Exception('Could not find BastionInstanceId in stack ' + stack_name)
+                      
+                      print('Using Bastion instance: ' + instance_id)
+                      
+                      # A2A Deploy Preprovision Command
+                      a2a_deploy_command = "#!/bin/bash\n"
+                      a2a_deploy_command += "# Redirect all output to log file\n"
+                      a2a_deploy_command += "LOG_FILE='/var/log/module-3-a2a-deploy.log'\n"
+                      a2a_deploy_command += "exec > >(tee -a $LOG_FILE) 2>&1\n"
+                      a2a_deploy_command += "echo \"=== Module 3 A2A Deploy Preprovision Started at $(date) ===\"\n"
+                      a2a_deploy_command += "set -x  # Enable debug mode\n"
+                      a2a_deploy_command += "sudo su - <<'EOF'\n"
+                      a2a_deploy_command += "# Redirect all output to log file in root context\n"
+                      a2a_deploy_command += "LOG_FILE='/var/log/module-3-a2a-deploy.log'\n"
+                      a2a_deploy_command += "exec > >(tee -a $LOG_FILE) 2>&1\n"
+                      a2a_deploy_command += "set -x  # Enable debug mode in root shell\n"
+                      a2a_deploy_command += "\n"
+                      a2a_deploy_command += "# Function to handle errors\n"
+                      a2a_deploy_command += "handle_error() {\n"
+                      a2a_deploy_command += "  echo \"========================================\"\n"
+                      a2a_deploy_command += "  echo \"ERROR at line $1: $2\"\n"
+                      a2a_deploy_command += "  echo \"Current directory: $(pwd)\"\n"
+                      a2a_deploy_command += "  echo \"Current user: $(whoami)\"\n"
+                      a2a_deploy_command += "  echo \"========================================\"\n"
+                      a2a_deploy_command += "  exit 1\n"
+                      a2a_deploy_command += "}\n"
+                      a2a_deploy_command += "\n"
+                      a2a_deploy_command += "TARGET_DIR='" + target_dir + "'\n"
+                      a2a_deploy_command += "\n"
+                      a2a_deploy_command += "echo '========================================'\n"
+                      a2a_deploy_command += "echo '=== Waiting for resource stabilization ==='\n"
+                      a2a_deploy_command += "echo 'Waiting 90 seconds for IAM roles, SSM parameters, and resources to stabilize...'\n"
+                      a2a_deploy_command += "sleep 90\n"
+                      a2a_deploy_command += "echo '========================================'\n"
+                      a2a_deploy_command += "\n"
+                      a2a_deploy_command += "echo '========================================'\n"
+                      a2a_deploy_command += "echo '=== Step 1: Deploy A2A Connectivity Agent Preprovision ==='\n"
+                      a2a_deploy_command += "echo '========================================'\n"
+                      a2a_deploy_command += "\n"
+                      a2a_deploy_command += "# Navigate to a2a-connectivity-agent directory\n"
+                      a2a_deploy_command += "if [ -d /root/workshop-module-3/a2a/a2a-connectivity-agent ]; then\n"
+                      a2a_deploy_command += "  echo 'Found a2a-connectivity-agent directory'\n"
+                      a2a_deploy_command += "  cd /root/workshop-module-3/a2a/a2a-connectivity-agent || handle_error $LINENO 'Failed to cd to a2a-connectivity-agent'\n"
+                      a2a_deploy_command += "else\n"
+                      a2a_deploy_command += "  echo 'ERROR: a2a-connectivity-agent directory not found'\n"
+                      a2a_deploy_command += "  echo 'Contents of /root/workshop-module-3/a2a:'\n"
+                      a2a_deploy_command += "  ls -la /root/workshop-module-3/a2a/ 2>&1 || echo 'a2a directory not found'\n"
+                      a2a_deploy_command += "  handle_error $LINENO 'a2a-connectivity-agent directory not found'\n"
+                      a2a_deploy_command += "fi\n"
+                      a2a_deploy_command += "\n"
+                      a2a_deploy_command += "echo \"Current directory: $(pwd)\"\n"
+                      a2a_deploy_command += "echo 'Contents of current directory:'\n"
+                      a2a_deploy_command += "ls -la\n"
+                      a2a_deploy_command += "\n"
+                      a2a_deploy_command += "# Check if deploy-preprovision.sh exists\n"
+                      a2a_deploy_command += "if [ -f deploy-preprovision.sh ]; then\n"
+                      a2a_deploy_command += "  echo 'Found deploy-preprovision.sh'\n"
+                      a2a_deploy_command += "  chmod +x deploy-preprovision.sh || handle_error $LINENO 'Failed to chmod deploy-preprovision.sh'\n"
+                      a2a_deploy_command += "  echo 'Executing deploy-preprovision.sh for a2a-connectivity-agent...'\n"
+                      a2a_deploy_command += "  ./deploy-preprovision.sh 2>&1 || handle_error $LINENO 'deploy-preprovision.sh failed for a2a-connectivity-agent'\n"
+                      a2a_deploy_command += "  echo '? A2A Connectivity Agent preprovision deployment completed successfully'\n"
+                      a2a_deploy_command += "else\n"
+                      a2a_deploy_command += "  echo 'ERROR: deploy-preprovision.sh not found in a2a-connectivity-agent directory'\n"
+                      a2a_deploy_command += "  handle_error $LINENO 'deploy-preprovision.sh not found'\n"
+                      a2a_deploy_command += "fi\n"
+                      a2a_deploy_command += "\n"
+                      a2a_deploy_command += "echo '========================================'\n"
+                      a2a_deploy_command += "echo '=== Step 2: Deploy A2A Performance Agent Preprovision ==='\n"
+                      a2a_deploy_command += "echo '========================================'\n"
+                      a2a_deploy_command += "\n"
+                      a2a_deploy_command += "# Navigate to a2a-performance-agent directory\n"
+                      a2a_deploy_command += "if [ -d /root/workshop-module-3/a2a/a2a-performance-agent ]; then\n"
+                      a2a_deploy_command += "  echo 'Found a2a-performance-agent directory'\n"
+                      a2a_deploy_command += "  cd /root/workshop-module-3/a2a/a2a-performance-agent || handle_error $LINENO 'Failed to cd to a2a-performance-agent'\n"
+                      a2a_deploy_command += "else\n"
+                      a2a_deploy_command += "  echo 'ERROR: a2a-performance-agent directory not found'\n"
+                      a2a_deploy_command += "  echo 'Contents of /root/workshop-module-3/a2a:'\n"
+                      a2a_deploy_command += "  ls -la /root/workshop-module-3/a2a/ 2>&1 || echo 'a2a directory not found'\n"
+                      a2a_deploy_command += "  handle_error $LINENO 'a2a-performance-agent directory not found'\n"
+                      a2a_deploy_command += "fi\n"
+                      a2a_deploy_command += "\n"
+                      a2a_deploy_command += "echo \"Current directory: $(pwd)\"\n"
+                      a2a_deploy_command += "echo 'Contents of current directory:'\n"
+                      a2a_deploy_command += "ls -la\n"
+                      a2a_deploy_command += "\n"
+                      a2a_deploy_command += "# Check if deploy-preprovision.sh exists\n"
+                      a2a_deploy_command += "if [ -f deploy-preprovision.sh ]; then\n"
+                      a2a_deploy_command += "  echo 'Found deploy-preprovision.sh'\n"
+                      a2a_deploy_command += "  chmod +x deploy-preprovision.sh || handle_error $LINENO 'Failed to chmod deploy-preprovision.sh'\n"
+                      a2a_deploy_command += "  echo 'Executing deploy-preprovision.sh for a2a-performance-agent...'\n"
+                      a2a_deploy_command += "  ./deploy-preprovision.sh 2>&1 || handle_error $LINENO 'deploy-preprovision.sh failed for a2a-performance-agent'\n"
+                      a2a_deploy_command += "  echo '? A2A Performance Agent preprovision deployment completed successfully'\n"
+                      a2a_deploy_command += "else\n"
+                      a2a_deploy_command += "  echo 'ERROR: deploy-preprovision.sh not found in a2a-performance-agent directory'\n"
+                      a2a_deploy_command += "  handle_error $LINENO 'deploy-preprovision.sh not found'\n"
+                      a2a_deploy_command += "fi\n"
+                      a2a_deploy_command += "\n"
+                      a2a_deploy_command += "echo '========================================'\n"
+                      a2a_deploy_command += "echo '? All A2A deploy-preprovision steps completed successfully'\n"
+                      a2a_deploy_command += "echo '========================================'\n"
+                      a2a_deploy_command += "EOF\n"
+                      
+                      if not run_ssm_command_with_retry(instance_id, a2a_deploy_command, "A2A Deploy Preprovision Scripts", 900, max_retries=3):
+                          raise Exception("A2A deploy preprovision failed after multiple retry attempts")
+                      
+                      print('\n=== A2A DEPLOY PREPROVISION COMPLETED SUCCESSFULLY ===')
+                      send_response(event, context, 'SUCCESS', {
+                          'Message': 'A2A deploy preprovision scripts completed successfully',
+                          'InstanceId': instance_id,
+                          'TargetDirectory': target_dir
+                      })
+                      return
+                  
+              except Exception as e:
+                  print('Error: ' + str(e))
+                  send_response(event, context, 'FAILED', {'Message': str(e)})
+
+  # Custom resource to trigger the A2A deploy preprovision
+  Module3A2ADeployCustomResource:
+    Type: Custom::Module3A2ADeploy
+    DependsOn: Module3ConnectivitySetupCustomResource
+    Properties:
+      ServiceToken: !GetAtt Module3A2ADeployLambda.Arn
+      SampleApplicationStackName: !Ref SampleApplicationStackName
+      TargetDirectory: !Ref TargetDirectory
+
+Outputs:
+  PerformanceSetupStatus:
+    Description: Module 3 setup status
+    Value: !GetAtt Module3SetupCustomResource.Message
+  
+  PerformanceLambdaFunctionArn:
+    Description: ARN of the setup Lambda function
+    Value: !GetAtt Module3SetupLambda.Arn
+  
+  TargetDirectory:
+    Description: Directory where module-3 was extracted
+    Value: !Ref TargetDirectory
+
+  ConnectivitySetupStatus:
+    Description: Module 3 connectivity setup status
+    Value: !GetAtt Module3ConnectivitySetupCustomResource.Message
+  
+  ConnectivityLambdaFunctionArn:
+    Description: ARN of the setup Lambda function
+    Value: !GetAtt Module3ConnectivitySetupLambda.Arn
+  
+  BaselineDeployBucketName:
+    Description: Name of the S3 bucket for baseline deployment artifacts
+    Value: !Ref BaselineDeployBucket
+  
+  BaselineDeployBucketArn:
+    Description: ARN of the S3 bucket for baseline deployment artifacts
+    Value: !GetAtt BaselineDeployBucket.Arn
+  
+  A2ADeployStatus:
+    Description: A2A deploy preprovision setup status
+    Value: !GetAtt Module3A2ADeployCustomResource.Message
+  
+  A2ADeployLambdaFunctionArn:
+    Description: ARN of the A2A deploy preprovision Lambda function
+    Value: !GetAtt Module3A2ADeployLambda.Arn

@@ -1,0 +1,348 @@
+================================================================================
+CHANGELOG - Sample Application Infrastructure
+================================================================================
+
+Version 1: agent-based-network-ops-amazon-bedrock-agents-and-bedockcore/static/sample-application.yaml
+Version 2: netops-workshop/agentcore-performance-agent/basline-infra/sample-app.yaml
+
+Release Date: 2025
+Purpose: Enhanced version for AgentCore Performance Agent Workshop with 
+         advanced network monitoring and traffic analysis capabilities
+
+================================================================================
+MAJOR ADDITIONS IN VERSION 2
+================================================================================
+
+[NEW] Traffic Mirroring Infrastructure
+---------------------------------------
++ Added TrafficMirroringS3Bucket
+  - Bucket name: traffic-mirroring-analysis-${AWS::AccountId}
+  - Lifecycle policies: 30d→Standard-IA, 90d→Glacier, 365d→Deep Archive
+  - 7-year retention policy
+  - Versioning enabled
+
++ Added TrafficMirroringS3BucketPolicy
+  - Allows TrafficMirroringTargetInstanceRole access
+  - Allows PacketAnalysisLambdaRole access
+  - Enforces secure transport (HTTPS only)
+
++ Added TrafficMirroringTargetInstanceRole
+  - SSM managed instance core policy
+  - CloudWatch agent server policy
+  - S3 access for packet storage
+  - CloudWatch metrics publishing
+  - Traffic mirroring management permissions
+
++ Added TrafficMirroringTargetInstanceProfile
+  - Instance profile for traffic mirroring target
+
++ Added TrafficMirroringTargetSecurityGroup
+  - Allows VXLAN traffic (UDP 4789) from App VPC (10.2.0.0/16)
+  - Allows VXLAN traffic (UDP 4789) from Reporting VPC (10.1.0.0/16)
+  - Allows all outbound traffic
+
++ Added TrafficMirroringTargetInstance
+  - Instance type: t3.medium
+  - AMI: Amazon Linux 2023
+  - Subnet: AppPrivateSubnet2
+  - UserData: Installs tcpdump, tshark, Mountpoint for S3
+  - Mounts S3 bucket for packet capture storage
+  - Systemd services for packet capture and monitoring
+  - Tag: NetworkFlowMonitor=enabled
+
++ Added PacketAnalysisFunction
+  - Runtime: Python 3.9
+  - Memory: 1024 MB
+  - Timeout: 300 seconds
+  - Analyzes PCAP files from S3
+  - Generates performance metrics
+  - Sends CloudWatch metrics
+  - Triggers alerts for critical issues
+
++ Added PacketAnalysisLambdaRole
+  - Lambda basic execution role
+  - S3 read/write access to traffic mirroring bucket
+  - CloudWatch PutMetricData permissions
+  - SNS publish permissions
+
++ Added PacketAnalysisLambdaInvokePermission
+  - Allows S3 to invoke packet analysis Lambda
+
++ Added TrafficMirroringAlertsTopic
+  - SNS topic for performance alerts
+  - Topic name: traffic-mirroring-alerts-${AWS::StackName}
+
++ Added TrafficMirroringDashboard
+  - CloudWatch dashboard for traffic mirroring metrics
+  - Displays PacketCount, BytesPerSecond, ServiceStatus
+  - Log insights for critical issues
+
+[NEW] VPC Endpoints for App VPC
+--------------------------------
++ Added AppVPCEndpointSecurityGroup
+  - Allows HTTPS (443) from App VPC (10.2.0.0/16)
+  - Allows HTTPS from BastionSecurityGroup
+
++ Added AppSSMVPCEndpoint
+  - Interface endpoint for SSM service
+  - Subnets: AppPrivateSubnet1, AppPrivateSubnet2
+
++ Added AppSSMMessagesVPCEndpoint
+  - Interface endpoint for SSM messages
+  - Subnets: AppPrivateSubnet1, AppPrivateSubnet2
+
++ Added AppEC2MessagesVPCEndpoint
+  - Interface endpoint for EC2 messages
+  - Subnets: AppPrivateSubnet1, AppPrivateSubnet2
+
++ Added AppEC2VPCEndpoint
+  - Interface endpoint for EC2 service
+  - Subnets: AppPrivateSubnet1, AppPrivateSubnet2
+
+[NEW] CloudWatch Log Groups
+----------------------------
++ Added PacketAnalysisLambdaLogGroup
+  - Log group: /aws/lambda/${PacketAnalysisFunction}
+  - Retention: 14 days
+
+[NEW] CloudFormation Outputs
+-----------------------------
++ TrafficMirroringS3BucketName
++ TrafficMirroringTargetInstanceId
++ TrafficMirroringTargetPrivateIP
++ TrafficMirroringTargetENI
++ PacketAnalysisFunctionArn
++ TrafficMirroringAlertsTopicArn
++ BastionInstanceENI
++ ReportingServerInstanceId
++ ReportingServerENI
++ TrafficMirroringDashboardURL
++ BastionInstanceIP
++ DatabaseName
++ DatabaseUsername
++ AppVPCId
++ ReportingVPCId
++ AppPrivateSubnet1Id
++ AppPrivateSubnet2Id
++ ReportingPrivateSubnetId
++ StackName
++ Region
+
+================================================================================
+MODIFICATIONS IN VERSION 2
+================================================================================
+
+[MODIFIED] Description
+----------------------
+- Version 1: 'Enhanced ACME Image Sharing Sample Application - Implementing Required Flow...'
+- Version 2: 'Image Sharing Sample Application - 3 Lambda Architecture'
+
+[MODIFIED] DBPassword Default Value
+------------------------------------
+- Version 1: ReInvent2025!
+- Version 2: SapConcurWorkshop25
+
+[MODIFIED] ImageBucket Naming
+------------------------------
+- Version 1: sample-app-${AWS::AccountId}-image-${AWS::StackName}-${AWS::Region}
+- Version 2: sample-app-${AWS::AccountId}-image-${AWS::StackName}
+  (Removed region suffix)
+
+[MODIFIED] BastionSecurityGroup
+--------------------------------
+- Removed: ICMP ingress from Reporting VPC (10.1.0.0/16)
++ Added: HTTPS egress to VPC endpoints (10.2.0.0/16)
+
+[MODIFIED] BastionInstanceRole
+-------------------------------
++ Added: CloudWatchNetworkFlowMonitorAgentPublishPolicy managed policy
+- Reduced inline policies to stay under 10 policy limit
+- Consolidated permissions into ProjectSpecificAccess policy
+
+[MODIFIED] BastionEC2Instance
+------------------------------
+- Instance type: t2.small → t3.micro
+- Removed workshop directory creation from UserData
++ Added: NetworkFlowMonitor=enabled tag
+
+[MODIFIED] ReportingVPCEndpoints
+---------------------------------
++ Added: PrivateDnsEnabled: true for all endpoints
+  - ReportingEC2MessagesVPCEndpoint
+  - ReportingSSMVPCEndpoint
+  - ReportingSSMMessagesVPCEndpoint
+
+[MODIFIED] ReportingServerSecurityGroup
+----------------------------------------
+- Removed: HTTP ingress from Reporting VPC (10.1.0.0/16)
+- Removed: HTTP ingress from App VPC (10.2.0.0/16)
+- Removed: MySQL ingress from App VPC (10.2.0.0/16)
+- Removed: MySQL ingress from Reporting VPC (10.1.0.0/16)
+- Removed: ICMP ingress from App VPC (10.2.0.0/16)
++ Added: HTTPS egress to VPC endpoints (10.1.0.0/16)
+
+[MODIFIED] ReportingServerRole
+-------------------------------
++ Added: CloudWatchNetworkFlowMonitorAgentPublishPolicy managed policy
+- Removed: PowerUserAccess managed policy
+- Removed: IAMFullAccess managed policy
++ Added: CloudWatchAgentServerPolicy managed policy
+- Simplified inline policies
++ Added: SSMParameterAccess policy
+
+[MODIFIED] ReportingServer (formerly ReportingEC2Instance)
+-----------------------------------------------------------
+- Instance type: t2.micro → t3.micro
+- Resource name: ReportingEC2Instance → ReportingServer
++ Added: NetworkFlowMonitor=enabled tag
+- UserData changes:
+  * Removed: Apache, PHP installation
+  * Removed: Analytics PHP API creation
+  * Removed: Database connection configuration
+  + Added: Python-based reporting script
+  + Added: CloudWatch metrics publishing
+  + Added: Systemd service for continuous monitoring
+
+[MODIFIED] HTMLRenderingFunction
+---------------------------------
+- Environment variable LAYOUT_VERSION: v6-flow-implementation → v5-force-redeploy
+- Environment variable FORCE_UPDATE: Updated version string
+- Environment variable DEPLOYMENT_TIME: Updated timestamp
+- Removed: REPORTING_SERVER_IP environment variable
+- Lambda code changes:
+  * Removed: Support ticket tables initialization
+  * Removed: Analytics proxy endpoint (/api/proxy)
+  * Removed: Support ticket API Gateway URL endpoint
+  + Added: sev1_correspondence_history table
+  + Added: workshop_modules table
+  + Added: /api/correspondence endpoint (GET/POST)
+  + Added: /api/workshop-progress endpoint (GET)
+  + Added: Workshop progress tracking functionality
+  + Added: Correspondence history tracking
+  - Simplified HTML: Removed Reports tab analytics proxy
+  + Enhanced HTML: Added workshop progress widgets
+
+[MODIFIED] ALB Listener Rules
+------------------------------
++ Added: CorrespondenceListenerRule (Priority: 75)
+  - Routes /api/correspondence to HTMLRenderingTargetGroup
++ Added: WorkshopProgressListenerRule (Priority: 80)
+  - Routes /api/workshop-progress to HTMLRenderingTargetGroup
+
+[MODIFIED] CloudWatch Log Groups
+---------------------------------
+- ImageAccessLogGroup: Retention 30 days (unchanged)
+- HTMLRenderingLambdaLogGroup: Retention 14 days (unchanged)
+- ImageProcessingLambdaLogGroup: Retention 14 days (unchanged)
+- UserInteractionLambdaLogGroup: Retention 14 days (unchanged)
+
+================================================================================
+REMOVALS IN VERSION 2
+================================================================================
+
+[REMOVED] Database Configuration
+---------------------------------
+- DatabaseParameterGroup
+  * Custom MySQL 8.0 parameter group
+  * Character set and collation settings
+  * PHP 5.4 compatibility configurations
+
+[REMOVED] Support Ticket System
+--------------------------------
+- SupportTicketApiGateway
+- SupportTicketApiResource
+- SupportTicketApiResourceProxy
+- SupportTicketApiMethod
+- SupportTicketApiMethodProxy
+- SupportTicketApiDeployment
+- SupportTicketLambdaPermission
+- SupportTicketFunction
+  * Complete ticket CRUD operations
+  * Correspondence management
+  * Database integration
+
+[REMOVED] Support URL Management
+---------------------------------
+- UpdateSupportURLFunction
+- UpdateSupportURLResource
+- SSM parameter for support API Gateway URL
+
+[REMOVED] Route 53 DNS Records
+-------------------------------
+- AppALBRecord (app.acme.com)
+
+[REMOVED] SSM Parameters
+-------------------------
+- DatabaseHostParameter
+- DatabaseUsernameParameter
+- DatabasePasswordParameter
+- DatabaseNameParameter
+- ALBURLParameter
+
+[REMOVED] CloudWatch Log Groups
+--------------------------------
+- CreatePyMySQLLayerLogGroup
+- UploadContentLogGroup
+
+[REMOVED] CloudFormation Outputs
+---------------------------------
+- SupportTicketApiGatewayURL
+- SupportTicketFunctionArn
+- PrivateApplicationURL
+- PrivateDatabaseURL
+- PrivateHostedZoneId
+
+================================================================================
+SUMMARY OF CHANGES
+================================================================================
+
+Total Resources Added: 23
+Total Resources Modified: 15
+Total Resources Removed: 20
+
+Key Focus Areas:
+1. Traffic Mirroring & Packet Analysis - Complete infrastructure for deep 
+   packet inspection and network performance monitoring
+2. VPC Endpoints - Enhanced private connectivity to AWS services
+3. CloudWatch Integration - Network Flow Monitor support across all instances
+4. Workshop Features - Progress tracking and correspondence management
+5. Simplified Configuration - Removed custom DB parameters and support system
+6. Cost Optimization - Instance type changes (t2 → t3)
+
+Target Use Case:
+Version 1: Production image sharing application with support ticket system
+Version 2: Network performance monitoring workshop with traffic analysis
+
+Estimated Cost Impact: +$100-150/month
+- Traffic mirroring target instance (t3.medium): ~$30/month
+- VPC endpoints (8 × $7.20): ~$58/month
+- S3 storage for packet captures: Variable
+- Additional Lambda invocations: Variable
+- CloudWatch metrics and dashboard: ~$10-20/month
+
+================================================================================
+MIGRATION NOTES
+================================================================================
+
+Breaking Changes:
+- Support ticket API Gateway endpoints no longer available
+- Reporting server no longer provides web interface
+- Database parameter group removed (uses default MySQL 8.0 settings)
+- ALB private DNS record (app.acme.com) removed
+
+New Capabilities:
+- Deep packet inspection with traffic mirroring
+- Automated packet analysis with Lambda
+- CloudWatch Network Flow Monitor integration
+- Workshop progress tracking
+- Real-time performance alerts via SNS
+
+Compatibility:
+- Database schema remains compatible
+- Lambda functions maintain backward compatibility for core features
+- VPC architecture unchanged (App VPC + Reporting VPC + Transit Gateway)
+- S3 bucket structure compatible
+
+================================================================================
+END OF CHANGELOG
+================================================================================

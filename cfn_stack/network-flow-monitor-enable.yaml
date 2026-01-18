@@ -1,0 +1,189 @@
+AWSTemplateFormatVersion: '2010-09-09'
+# ============================================================================
+# Network Flow Monitor 서비스 활성화
+# 이 템플릿은 Network Flow Monitor 서비스를 활성화하기 위한 서비스 연결 역할을 생성합니다.
+# 배포 순서: 2a단계 (sample-application 이후, network-flow-monitor-setup 이전)
+# ============================================================================
+Description: 'AWS Network Flow Monitor Service Enablement - Creates service-linked role to enable the Network Flow Monitor service'
+
+Resources:
+  # ==========================================
+  # 커스텀 리소스 Lambda용 IAM 역할
+  # IAM ROLE FOR CUSTOM RESOURCE LAMBDA
+  # ==========================================
+  NetworkFlowMonitorLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: NetworkFlowMonitorServiceEnablementPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - iam:GetRole
+                  - iam:CreateServiceLinkedRole
+                Resource:
+                  - !Sub 'arn:aws:iam::${AWS::AccountId}:role/aws-service-role/networkflowmonitor.amazonaws.com/*'
+                  - !Sub 'arn:aws:iam::${AWS::AccountId}:role/aws-service-role/topology.networkflowmonitor.amazonaws.com/*'
+                  - !Sub 'arn:aws:iam::${AWS::AccountId}:role/AWSServiceRoleForNetworkFlowMonitor*'
+
+  # ==========================================
+  # 서비스 활성화용 Lambda 함수
+  # LAMBDA FUNCTION FOR SERVICE ENABLEMENT
+  # ==========================================
+  NetworkFlowMonitorServiceEnablementLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-service-enablement'
+      Runtime: python3.11
+      Handler: index.lambda_handler
+      Role: !GetAtt NetworkFlowMonitorLambdaRole.Arn
+      Timeout: 300
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import logging
+          import time
+          from datetime import datetime, timezone
+          import cfnresponse
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          def lambda_handler(event, context):
+              """Network Flow Monitor 서비스 활성화를 위한 커스텀 리소스 핸들러"""
+              try:
+                  logger.info(f"Event: {json.dumps(event)}")
+
+                  request_type = event['RequestType']
+
+                  if request_type == 'Delete':
+                      logger.info("Delete request for service enablement - no action needed (role persists)")
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+                      return
+
+                  iam_client = boto3.client('iam')
+                  service_name = 'networkflowmonitor.amazonaws.com'
+                  role_name = 'AWSServiceRoleForNetworkFlowMonitor'
+
+                  # 서비스 연결 역할이 이미 존재하는지 확인
+                  role_exists = False
+                  try:
+                      iam_client.get_role(RoleName=role_name)
+                      role_exists = True
+                      logger.info(f"Service-linked role {role_name} already exists")
+                  except iam_client.exceptions.NoSuchEntityException:
+                      logger.info(f"Service-linked role {role_name} does not exist, will create")
+                  except Exception as e:
+                      logger.warning(f"Error checking role existence: {str(e)}")
+
+                  # Update 요청이고 역할이 존재하면 성공 반환
+                  if request_type == 'Update' and role_exists:
+                      logger.info("Update request - service already enabled")
+                      response_data = {
+                          'ServiceEnabled': 'true',
+                          'ServiceLinkedRoleName': role_name,
+                          'Status': 'already_exists'
+                      }
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, response_data)
+                      return
+
+                  # 역할이 이미 존재하면 (Create 요청) 성공 반환
+                  if role_exists:
+                      logger.info("Service already enabled - returning success")
+                      response_data = {
+                          'ServiceEnabled': 'true',
+                          'ServiceLinkedRoleName': role_name,
+                          'Status': 'already_exists'
+                      }
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, response_data)
+                      return
+
+                  # 서비스 활성화를 위한 서비스 연결 역할 생성
+                  try:
+                      logger.info(f"Creating service-linked role for {service_name}")
+                      create_response = iam_client.create_service_linked_role(
+                          AWSServiceName=service_name,
+                          Description='Service-linked role for AWS Network Flow Monitor'
+                      )
+
+                      role_arn = create_response['Role']['Arn']
+                      logger.info(f"Successfully created service-linked role: {role_arn}")
+
+                      # 역할이 전파될 때까지 대기
+                      time.sleep(10)
+
+                      response_data = {
+                          'ServiceEnabled': 'true',
+                          'ServiceLinkedRoleName': role_name,
+                          'ServiceLinkedRoleArn': role_arn,
+                          'Status': 'created',
+                          'Timestamp': datetime.now(timezone.utc).isoformat()
+                      }
+
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, response_data)
+
+                  except iam_client.exceptions.InvalidInputException as e:
+                      if 'already exists' in str(e).lower():
+                          logger.info("Service-linked role already exists (race condition)")
+                          response_data = {
+                              'ServiceEnabled': 'true',
+                              'ServiceLinkedRoleName': role_name,
+                              'Status': 'already_exists'
+                          }
+                          cfnresponse.send(event, context, cfnresponse.SUCCESS, response_data)
+                      else:
+                          raise
+
+              except Exception as e:
+                  logger.error(f"Service enablement error: {str(e)}", exc_info=True)
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {'Error': str(e)})
+
+  # ==========================================
+  # Network Flow Monitor 서비스 활성화 리소스
+  # ENABLE NETWORK FLOW MONITOR SERVICE
+  # ==========================================
+  NetworkFlowMonitorServiceEnabler:
+    Type: Custom::ServiceEnabler
+    Properties:
+      ServiceToken: !GetAtt NetworkFlowMonitorServiceEnablementLambda.Arn
+
+# ==========================================
+# 출력값
+# OUTPUTS
+# ==========================================
+Outputs:
+  ServiceEnabled:
+    Description: Network Flow Monitor service enablement status
+    Value: !GetAtt NetworkFlowMonitorServiceEnabler.ServiceEnabled
+    Export:
+      Name: !Sub '${AWS::StackName}-service-enabled'
+
+  ServiceLinkedRoleName:
+    Description: Name of the Network Flow Monitor service-linked role
+    Value: !GetAtt NetworkFlowMonitorServiceEnabler.ServiceLinkedRoleName
+    Export:
+      Name: !Sub '${AWS::StackName}-service-role-name'
+
+  ServiceEnablementStatus:
+    Description: Status of service enablement (created or already_exists)
+    Value: !GetAtt NetworkFlowMonitorServiceEnabler.Status
+    Export:
+      Name: !Sub '${AWS::StackName}-enablement-status'
+
+  LambdaFunctionArn:
+    Description: ARN of the Service Enablement Lambda Function
+    Value: !GetAtt NetworkFlowMonitorServiceEnablementLambda.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-lambda-arn'

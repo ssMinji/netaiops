@@ -1,0 +1,837 @@
+AWSTemplateFormatVersion: '2010-09-09'
+# ============================================================================
+# Network Flow Monitor 설정
+# 이 템플릿은 Network Flow Monitor 에이전트를 설치하고 모니터를 생성합니다.
+# 사전 요구사항: network-flow-monitor-enable 스택이 먼저 배포되어야 합니다.
+# 배포 순서: 3단계 (sample-application, network-flow-monitor-enable 이후)
+# ============================================================================
+Description: 'AWS Network Flow Monitor Setup - Installs agents and creates monitors (requires network-flow-monitor-enable stack to be deployed first)'
+
+Parameters:
+  AppVPCId:
+    Type: String
+    Description: ID of the App VPC to monitor
+    Default: ''
+
+  ReportingVPCId:
+    Type: String
+    Description: ID of the Reporting VPC to monitor
+    Default: ''
+
+  MonitorName:
+    Type: String
+    Default: 'examplecorp-vpc-network-monitor'
+    Description: Base name for the Network Flow Monitors
+
+  BastionInstanceId:
+    Type: String
+    Description: Instance ID of the Bastion EC2 instance to install agent on
+    Default: ''
+
+  ReportingServerInstanceId:
+    Type: String
+    Description: Instance ID of the Reporting Server to install agent on
+    Default: ''
+
+  SampleApplicationStackName:
+    Type: String
+    Description: Name of the sample application CloudFormation stack
+    Default: 'sample-application'
+
+  NetworkFlowMonitorEnableStackName:
+    Type: String
+    Description: Name of the network-flow-monitor-enable CloudFormation stack
+    Default: 'network-flow-monitor-enable'
+
+Conditions:
+  UseImportedAppVPC: !Equals [!Ref AppVPCId, '']
+  UseImportedReportingVPC: !Equals [!Ref ReportingVPCId, '']
+  UseImportedBastionInstance: !Equals [!Ref BastionInstanceId, '']
+  UseImportedReportingInstance: !Equals [!Ref ReportingServerInstanceId, '']
+
+Mappings:
+  StackOutputs:
+    Keys:
+      AppVPCId: 'AppVPCId'
+      ReportingVPCId: 'ReportingVPCId'
+      BastionInstanceId: 'BastionInstanceId'
+      ReportingInstanceId: 'ReportingInstanceId'
+
+Resources:
+  # ==========================================
+  # Step Functions용 IAM 역할
+  # IAM ROLE FOR STEP FUNCTIONS
+  # ==========================================
+  StepFunctionsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: states.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: StepFunctionsPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource: !GetAtt NetworkFlowMonitorLambda.Arn
+
+  # ==========================================
+  # 커스텀 리소스 Lambda용 IAM 역할
+  # IAM ROLE FOR CUSTOM RESOURCE LAMBDA
+  # ==========================================
+  NetworkFlowMonitorLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: NetworkFlowMonitorPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - networkflowmonitor:CreateScope
+                  - networkflowmonitor:ListScopes
+                  - networkflowmonitor:GetScope
+                  - networkflowmonitor:CreateMonitor
+                  - networkflowmonitor:GetMonitor
+                  - networkflowmonitor:ListMonitors
+                  - networkflowmonitor:DeleteMonitor
+                  - networkflowmonitor:TagResource
+                  - ec2:DescribeVpcs
+                  - ec2:DescribeInstances
+                  - ssm:SendCommand
+                  - ssm:GetCommandInvocation
+                  - sts:GetCallerIdentity
+                  - cloudformation:DescribeStacks
+                  - states:StartExecution
+                  - states:DescribeExecution
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - iam:GetRole
+                  - iam:CreateServiceLinkedRole
+                  - iam:PassRole
+                Resource:
+                  - !Sub 'arn:aws:iam::${AWS::AccountId}:role/aws-service-role/networkflowmonitor.amazonaws.com/*'
+                  - !Sub 'arn:aws:iam::${AWS::AccountId}:role/aws-service-role/topology.networkflowmonitor.amazonaws.com/*'
+                  - !Sub 'arn:aws:iam::${AWS::AccountId}:role/AWSServiceRoleForNetworkFlowMonitor*'
+
+  # ==========================================
+  # STEP FUNCTIONS STATE MACHINE FOR DELAYED AGENT INSTALLATION
+  # ==========================================
+  AgentInstallationStateMachine:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: !Sub '${AWS::StackName}-agent-installation'
+      RoleArn: !GetAtt StepFunctionsRole.Arn
+      DefinitionString: !Sub |
+        {
+          "Comment": "Delayed Network Flow Monitor Agent Installation",
+          "StartAt": "WaitForMonitorStabilization",
+          "States": {
+            "WaitForMonitorStabilization": {
+              "Type": "Wait",
+              "Seconds": 1800,
+              "Comment": "Wait 30 minutes for Network Flow Monitor to stabilize",
+              "Next": "InstallAgents"
+            },
+            "InstallAgents": {
+              "Type": "Task",
+              "Resource": "${NetworkFlowMonitorLambda.Arn}",
+              "End": true
+            }
+          }
+        }
+
+  # ==========================================
+  # Lambda 함수
+  # LAMBDA FUNCTION FOR CUSTOM RESOURCE
+  # ==========================================
+  NetworkFlowMonitorLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-network-flow-monitor-cr'
+      Runtime: python3.11
+      Handler: index.lambda_handler
+      Role: !GetAtt NetworkFlowMonitorLambdaRole.Arn
+      Timeout: 900  # 15 minutes for agent installation (no delay in Lambda anymore)
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import logging
+          import time
+          from datetime import datetime, timezone
+          import cfnresponse
+          
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+          
+          def lambda_handler(event, context):
+              """Custom resource handler for Network Flow Monitor agent installation and monitor creation"""
+              try:
+                  logger.info(f"Event: {json.dumps(event)}")
+                  
+                  # Detect if this is a CloudFormation event or Step Functions event
+                  is_cfn_event = 'RequestType' in event
+                  
+                  if is_cfn_event:
+                      # CloudFormation custom resource event
+                      request_type = event['RequestType']
+                      properties = event['ResourceProperties']
+                      resource_type = properties.get('ResourceType', 'Monitor')
+                  else:
+                      # Step Functions event - direct invocation after delay
+                      request_type = 'Create'  # Treat as Create for agent installation
+                      properties = event
+                      resource_type = event.get('ResourceType', 'AgentInstaller')
+                  
+                  if resource_type == 'AgentInstaller':
+                      return handle_agent_installation(event, context, properties, is_cfn_event)
+                  elif resource_type == 'Monitor':
+                      return handle_monitor_creation(event, context, properties, is_cfn_event)
+                  else:
+                      raise ValueError(f"Unknown ResourceType: {resource_type}")
+                  
+              except Exception as e:
+                  logger.error(f"Error: {str(e)}", exc_info=True)
+                  if 'RequestType' in event:
+                      cfnresponse.send(event, context, cfnresponse.FAILED, {'Error': str(e)})
+                  else:
+                      # Step Functions invocation - just raise the error
+                      raise
+          
+          def handle_agent_installation(event, context, properties, is_cfn_event=True):
+              """Handle Network Flow Monitor agent installation on EC2 instances"""
+              try:
+                  request_type = event.get('RequestType', 'Create')
+                  
+                  if request_type == 'Delete':
+                      logger.info("Delete request for agent - no action needed")
+                      if is_cfn_event:
+                          cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+                      return
+                  
+                  # Check if this is being called from Step Functions (no delay needed)
+                  # or directly from CloudFormation (trigger Step Functions for delay)
+                  use_step_functions = properties.get('UseStepFunctions', 'false').lower() == 'true'
+                  
+                  if use_step_functions and 'StateMachineArn' in properties:
+                      # Trigger Step Functions state machine for delayed execution
+                      sfn_client = boto3.client('stepfunctions')
+                      state_machine_arn = properties['StateMachineArn']
+                      
+                      # Prepare input for state machine (remove Step Functions specific properties)
+                      execution_input = {k: v for k, v in properties.items() 
+                                        if k not in ['ServiceToken', 'UseStepFunctions', 'StateMachineArn']}
+                      execution_input['ResourceType'] = 'AgentInstaller'
+                      
+                      logger.info(f"Properties before filtering: {json.dumps(properties)}")
+                      logger.info(f"Execution input for Step Functions: {json.dumps(execution_input)}")
+                      logger.info(f"Starting Step Functions execution for delayed agent installation")
+                      
+                      execution_response = sfn_client.start_execution(
+                          stateMachineArn=state_machine_arn,
+                          input=json.dumps(execution_input)
+                      )
+                      
+                      execution_arn = execution_response['executionArn']
+                      logger.info(f"Step Functions execution started: {execution_arn}")
+                      
+                      # Return success immediately - Step Functions will handle the delay and installation
+                      response_data = {
+                          'ExecutionArn': execution_arn,
+                          'Status': 'PENDING',
+                          'Message': 'Agent installation scheduled via Step Functions with 30-minute delay'
+                      }
+                      if is_cfn_event:
+                          cfnresponse.send(event, context, cfnresponse.SUCCESS, response_data)
+                      return response_data
+                  
+                  # Direct installation (called from Step Functions after delay)
+                  instance_ids = properties.get('InstanceIds', [])
+                  if isinstance(instance_ids, str):
+                      instance_ids = [instance_ids]
+                  region = properties.get('Region', 'us-east-1')
+                  
+                  ssm_client = boto3.client('ssm', region_name=region)
+                  ec2_client = boto3.client('ec2', region_name=region)
+                  
+                  # Install script for network flow monitor agent
+                  install_script = "#!/bin/bash\nset +e\n\necho \"=== Network Flow Monitor Agent Installation Started ===\"\necho \"Timestamp: $(date)\"\necho \"Instance ID: $(curl -s http://169.254.169.254/latest/meta-data/instance-id 2>/dev/null || echo 'Unable to fetch')\"\n\necho \"Updating system packages...\"\nsudo yum update -y\n\necho \"Checking for existing Network Flow Monitor Agent installations...\"\nEXISTING_PACKAGES=$(rpm -qa | grep -i network-flow-monitor || true)\nif [ -n \"$EXISTING_PACKAGES\" ]; then\n    echo \"Found existing packages, removing...\"\n    for package in $EXISTING_PACKAGES; do\n        sudo rpm -e \"$package\" --nodeps --force || true\n    done\nfi\n\nsudo rm -rf /opt/aws/network-flow-monitor || true\nsudo rm -f /usr/lib/systemd/system/network-flow-monitor.service || true\nsudo rm -f /etc/systemd/system/network-flow-monitor.service || true\nsudo systemctl daemon-reload\n\necho \"Installing Network Flow Monitor Agent...\"\ncd /tmp\n\nfor i in {1..3}; do\n    echo \"Installation attempt $i/3...\"\n    if sudo yum install -y https://networkflowmonitoragent.awsstatic.com/latest/x86_64/network-flow-monitor-agent.rpm; then\n        echo \"Agent installed via yum\"\n        break\n    else\n        if wget -O network-flow-monitor-agent.rpm https://networkflowmonitoragent.awsstatic.com/latest/x86_64/network-flow-monitor-agent.rpm; then\n            if sudo rpm -i --force ./network-flow-monitor-agent.rpm; then\n                echo \"Agent installed via RPM\"\n                break\n            fi\n        fi\n    fi\n    if [ $i -eq 3 ]; then\n        echo \"Installation failed after 3 attempts\"\n        exit 1\n    fi\n    sleep 5\ndone\n\nif rpm -qa | grep -q network-flow-monitor-agent; then\n    echo \"Agent package verified\"\n    PACKAGE_INSTALLED=\"true\"\nelse\n    echo \"Agent package not found\"\n    PACKAGE_INSTALLED=\"false\"\nfi\n\nif systemctl list-unit-files | grep -q network-flow-monitor; then\n    sudo systemctl enable network-flow-monitor\n    sudo systemctl start network-flow-monitor\n    if sudo systemctl is-active network-flow-monitor >/dev/null 2>&1; then\n        echo \"Service is active\"\n        SERVICE_STATUS=\"active\"\n    else\n        echo \"Service is not active\"\n        SERVICE_STATUS=\"inactive\"\n    fi\nelse\n    echo \"Service not found\"\n    SERVICE_STATUS=\"not_found\"\nfi\n\nsudo yum install -y tcpdump wireshark-cli iftop nethogs || true\n\necho \"=== Installation Summary ===\"\necho \"Package Installed: $PACKAGE_INSTALLED\"\necho \"Service Status: $SERVICE_STATUS\"\necho \"Timestamp: $(date)\"\n\nif [ \"$PACKAGE_INSTALLED\" = \"true\" ]; then\n    exit 0\nelse\n    exit 1\nfi"
+                  
+                  installation_results = []
+                  
+                  for instance_id in instance_ids:
+                      logger.info(f"Installing agent on instance: {instance_id}")
+                      
+                      # Validate instance
+                      try:
+                          instances_response = ec2_client.describe_instances(InstanceIds=[instance_id])
+                          if not instances_response['Reservations']:
+                              raise ValueError(f"Instance {instance_id} not found")
+                          
+                          instance = instances_response['Reservations'][0]['Instances'][0]
+                          instance_state = instance['State']['Name']
+                          
+                          if instance_state != 'running':
+                              logger.warning(f"Instance {instance_id} is not running: {instance_state}")
+                              installation_results.append({
+                                  'InstanceId': instance_id,
+                                  'Status': 'skipped',
+                                  'Reason': f'Instance not running: {instance_state}'
+                              })
+                              continue
+                      except Exception as e:
+                          logger.error(f"Failed to validate instance {instance_id}: {str(e)}")
+                          installation_results.append({
+                              'InstanceId': instance_id,
+                              'Status': 'failed',
+                              'Error': str(e)
+                          })
+                          continue
+                      
+                      # Execute installation via SSM
+                      try:
+                          response = ssm_client.send_command(
+                              InstanceIds=[instance_id],
+                              DocumentName='AWS-RunShellScript',
+                              Parameters={'commands': [install_script]},
+                              Comment=f'Install Network Flow Monitor agent on {instance_id}',
+                              TimeoutSeconds=600
+                          )
+                          
+                          command_id = response['Command']['CommandId']
+                          logger.info(f"SSM command sent: {command_id}")
+                          
+                          # Wait for command completion
+                          max_wait = 600
+                          poll_interval = 10
+                          elapsed = 0
+                          command_status = 'InProgress'
+                          
+                          while elapsed < max_wait and command_status == 'InProgress':
+                              time.sleep(poll_interval)
+                              elapsed += poll_interval
+                              
+                              try:
+                                  command_result = ssm_client.get_command_invocation(
+                                      CommandId=command_id,
+                                      InstanceId=instance_id
+                                  )
+                                  command_status = command_result['Status']
+                                  
+                                  if command_status in ['Success', 'Failed', 'Cancelled', 'TimedOut']:
+                                      break
+                              except Exception as e:
+                                  logger.warning(f"Could not get command status: {str(e)}")
+                                  break
+                          
+                          installation_results.append({
+                              'InstanceId': instance_id,
+                              'Status': command_status.lower(),
+                              'CommandId': command_id,
+                              'ExecutionTime': elapsed
+                          })
+                          
+                      except Exception as e:
+                          logger.error(f"Failed to install agent on {instance_id}: {str(e)}")
+                          installation_results.append({
+                              'InstanceId': instance_id,
+                              'Status': 'failed',
+                              'Error': str(e)
+                          })
+                  
+                  # Determine overall status
+                  successful = [r for r in installation_results if r['Status'] == 'success']
+                  failed = [r for r in installation_results if r['Status'] == 'failed']
+                  
+                  response_data = {
+                      'TotalInstances': len(instance_ids),
+                      'SuccessfulInstallations': len(successful),
+                      'FailedInstallations': len(failed),
+                      'InstallationResults': json.dumps(installation_results),
+                      'Timestamp': datetime.now(timezone.utc).isoformat()
+                  }
+                  
+                  # Consider it success if at least one installation succeeded
+                  if is_cfn_event:
+                      if len(successful) > 0:
+                          cfnresponse.send(event, context, cfnresponse.SUCCESS, response_data)
+                      else:
+                          cfnresponse.send(event, context, cfnresponse.FAILED, response_data)
+                  else:
+                      # Step Functions invocation - return the data
+                      logger.info(f"Agent installation completed: {json.dumps(response_data)}")
+                      return response_data
+                  
+              except Exception as e:
+                  logger.error(f"Agent installation error: {str(e)}", exc_info=True)
+                  if is_cfn_event:
+                      cfnresponse.send(event, context, cfnresponse.FAILED, {'Error': str(e)})
+                  else:
+                      raise
+          
+          def handle_monitor_creation(event, context, properties, is_cfn_event=True):
+              """Handle Network Flow Monitor creation"""
+              try:
+                  request_type = event.get('RequestType', 'Create')
+                  
+                  if request_type == 'Delete':
+                      logger.info("Delete request - no action needed")
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+                      return
+                  
+                  vpc_ids = properties.get('VpcIds', [])
+                  if isinstance(vpc_ids, str):
+                      vpc_ids = [vpc_ids]
+                  region = properties.get('Region', 'us-east-1')
+                  monitor_name = properties.get('MonitorName', 'vpc-monitor')
+                  
+                  nfm_client = boto3.client('networkflowmonitor', region_name=region)
+                  ec2_client = boto3.client('ec2', region_name=region)
+                  sts_client = boto3.client('sts', region_name=region)
+                  
+                  # Get account ID
+                  account_id = sts_client.get_caller_identity()['Account']
+                  
+                  # Check if monitor already exists
+                  monitor_exists = False
+                  existing_monitor_arn = None
+                  existing_monitor_status = None
+                  
+                  try:
+                      existing_monitor = nfm_client.get_monitor(monitorName=monitor_name)
+                      monitor_exists = True
+                      existing_monitor_arn = existing_monitor.get('monitorArn')
+                      existing_monitor_status = existing_monitor.get('monitorStatus', 'UNKNOWN')
+                      logger.info(f"Monitor already exists: {existing_monitor_arn}")
+                  except nfm_client.exceptions.ResourceNotFoundException:
+                      logger.info(f"Monitor does not exist, will create: {monitor_name}")
+                  except Exception as e:
+                      logger.warning(f"Error checking monitor existence: {str(e)}")
+                  
+                  # If Update request and monitor exists, just return existing info
+                  if request_type == 'Update' and monitor_exists:
+                      logger.info("Update request for existing monitor - returning existing monitor info")
+                      response_data = {
+                          'MonitorArn': existing_monitor_arn,
+                          'MonitorName': monitor_name,
+                          'MonitorStatus': existing_monitor_status,
+                          'VpcIds': ','.join(vpc_ids),
+                          'VpcCount': len(vpc_ids),
+                          'ScopeArn': 'existing',
+                          'Region': region
+                      }
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, response_data, existing_monitor_arn)
+                      return
+                  
+                  # If monitor already exists (Create request), return existing info
+                  if monitor_exists:
+                      logger.info("Monitor already exists - returning existing monitor info")
+                      response_data = {
+                          'MonitorArn': existing_monitor_arn,
+                          'MonitorName': monitor_name,
+                          'MonitorStatus': existing_monitor_status,
+                          'VpcIds': ','.join(vpc_ids),
+                          'VpcCount': len(vpc_ids),
+                          'ScopeArn': 'existing',
+                          'Region': region
+                      }
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, response_data, existing_monitor_arn)
+                      return
+                  
+                  # Validate VPCs and build local resources
+                  local_resources = []
+                  vpc_cidrs = []
+                  
+                  for vpc_id in vpc_ids:
+                      vpc_response = ec2_client.describe_vpcs(VpcIds=[vpc_id])
+                      if not vpc_response['Vpcs']:
+                          raise ValueError(f"VPC {vpc_id} not found")
+                      
+                      vpc_info = vpc_response['Vpcs'][0]
+                      cidr_block = vpc_info['CidrBlock']
+                      vpc_cidrs.append(cidr_block)
+                      
+                      vpc_arn = f"arn:aws:ec2:{region}:{account_id}:vpc/{vpc_id}"
+                      local_resources.append({
+                          'type': 'AWS::EC2::VPC',
+                          'identifier': vpc_arn
+                      })
+                  
+                  # Ensure scope exists
+                  scope_arn = ensure_scope_exists(nfm_client, account_id, region)
+                  
+                  # Create monitor
+                  monitor_response = nfm_client.create_monitor(
+                      monitorName=monitor_name,
+                      localResources=local_resources,
+                      remoteResources=[
+                          {
+                              'type': 'AWS::Region',
+                              'identifier': region
+                          }
+                      ],
+                      scopeArn=scope_arn,
+                      tags={
+                          'CreatedBy': 'CloudFormation',
+                          'VpcCount': str(len(vpc_ids)),
+                          'Purpose': 'Performance_Monitoring',
+                          'AgentInstalled': 'true'
+                      }
+                  )
+                  
+                  monitor_arn = monitor_response.get('monitorArn')
+                  monitor_status = monitor_response.get('monitorStatus', 'UNKNOWN')
+                  
+                  # Wait for monitor to become active
+                  max_wait = 60
+                  wait_interval = 10
+                  elapsed = 0
+                  
+                  while elapsed < max_wait:
+                      time.sleep(wait_interval)
+                      elapsed += wait_interval
+                      
+                      try:
+                          status_response = nfm_client.get_monitor(monitorName=monitor_name)
+                          current_status = status_response.get('monitorStatus', 'UNKNOWN')
+                          
+                          if current_status in ['ACTIVE', 'PENDING']:
+                              break
+                          elif current_status in ['FAILED', 'ERROR']:
+                              break
+                      except Exception as e:
+                          logger.warning(f"Could not check status: {str(e)}")
+                          break
+                  
+                  response_data = {
+                      'MonitorArn': monitor_arn,
+                      'MonitorName': monitor_name,
+                      'MonitorStatus': monitor_status,
+                      'VpcIds': ','.join(vpc_ids),
+                      'VpcCount': len(vpc_ids),
+                      'ScopeArn': scope_arn,
+                      'Region': region
+                  }
+                  
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, response_data, monitor_arn)
+                  
+              except Exception as e:
+                  logger.error(f"Monitor creation error: {str(e)}", exc_info=True)
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {'Error': str(e)})
+          
+          def ensure_scope_exists(nfm_client, account_id, region):
+              """Ensure a Network Flow Monitor scope exists"""
+              try:
+                  scopes_response = nfm_client.list_scopes()
+                  existing_scopes = scopes_response.get('scopes', [])
+                  
+                  for scope in existing_scopes:
+                      if scope.get('status') in ['SUCCEEDED', 'IN_PROGRESS']:
+                          return scope.get('scopeArn')
+                  
+                  scope_response = nfm_client.create_scope(
+                      targets=[
+                          {
+                              'targetIdentifier': {
+                                  'targetId': {
+                                      'accountId': account_id
+                                  },
+                                  'targetType': 'ACCOUNT'
+                              },
+                              'region': region
+                          }
+                      ],
+                      tags={
+                          'CreatedBy': 'CloudFormation',
+                          'Purpose': 'Network_Flow_Monitoring'
+                      }
+                  )
+                  
+                  scope_arn = scope_response.get('scopeArn')
+                  
+                  # Wait for scope
+                  max_wait = 60
+                  wait_interval = 10
+                  elapsed = 0
+                  
+                  while elapsed < max_wait:
+                      time.sleep(wait_interval)
+                      elapsed += wait_interval
+                      
+                      try:
+                          scope_id = scope_arn.split('/')[-1]
+                          status_response = nfm_client.get_scope(scopeId=scope_id)
+                          current_status = status_response.get('status', 'UNKNOWN')
+                          
+                          if current_status == 'SUCCEEDED':
+                              break
+                          elif current_status == 'FAILED':
+                              break
+                      except Exception as e:
+                          logger.warning(f"Could not check scope status: {str(e)}")
+                          break
+                  
+                  return scope_arn
+                  
+              except Exception as e:
+                  logger.error(f"Failed to ensure scope exists: {str(e)}")
+                  raise
+
+  # ==========================================
+  # STEP 1: CREATE NETWORK FLOW MONITOR
+  # ==========================================
+  UnifiedNetworkFlowMonitor:
+    Type: Custom::NetworkFlowMonitor
+    Properties:
+      ServiceToken: !GetAtt NetworkFlowMonitorLambda.Arn
+      ResourceType: Monitor
+      VpcIds:
+        - !If 
+          - UseImportedAppVPC
+          - !ImportValue
+              Fn::Sub: '${SampleApplicationStackName}-AppVPCId'
+          - !Ref AppVPCId
+        - !If 
+          - UseImportedReportingVPC
+          - !ImportValue
+              Fn::Sub: '${SampleApplicationStackName}-ReportingVPCId'
+          - !Ref ReportingVPCId
+      Region: !Ref AWS::Region
+      MonitorName: !Ref MonitorName
+
+  # ==========================================
+  # STEP 2: INSTALL NETWORK FLOW MONITOR AGENT (AFTER 30 MIN DELAY)
+  # DependsOn ensures monitor is created first
+  # Uses Step Functions state machine to handle 30-minute delay (Lambda has 15-min limit)
+  # ==========================================
+  NetworkFlowMonitorAgentInstaller:
+    Type: Custom::AgentInstaller
+    DependsOn: 
+      - UnifiedNetworkFlowMonitor
+      - AgentInstallationStateMachine
+    Properties:
+      ServiceToken: !GetAtt NetworkFlowMonitorLambda.Arn
+      ResourceType: AgentInstaller
+      UseStepFunctions: 'true'
+      StateMachineArn: !GetAtt AgentInstallationStateMachine.Arn
+      InstanceIds:
+        - !If 
+          - UseImportedBastionInstance
+          - !ImportValue
+              Fn::Sub: '${SampleApplicationStackName}-BastionInstanceId'
+          - !Ref BastionInstanceId
+        - !If 
+          - UseImportedReportingInstance
+          - !ImportValue
+              Fn::Sub: '${SampleApplicationStackName}-ReportingInstanceId'
+          - !Ref ReportingServerInstanceId
+      Region: !Ref AWS::Region
+      # Ensure service is enabled first by referencing the enable stack
+      ServiceEnabledStackName: !Ref NetworkFlowMonitorEnableStackName
+
+  # ==========================================
+  # CLOUDWATCH LOG GROUP FOR MONITOR METRICS
+  # ==========================================
+  NetworkFlowMonitorLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/networkflowmonitor/${MonitorName}'
+      RetentionInDays: 14
+      Tags:
+        - Key: Name
+          Value: !Sub '${MonitorName}-logs'
+
+  # ==========================================
+  # CLOUDWATCH DASHBOARD FOR NETWORK METRICS
+  # ==========================================
+  NetworkFlowMonitorDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub '${MonitorName}-dashboard'
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "type": "metric",
+              "properties": {
+                "metrics": [
+                  ["AWS/NetworkFlowMonitor", "PacketLoss", {"stat": "Average"}],
+                  [".", "Latency", {"stat": "Average"}],
+                  [".", "Jitter", {"stat": "Average"}]
+                ],
+                "period": 300,
+                "stat": "Average",
+                "region": "${AWS::Region}",
+                "title": "Network Performance Metrics",
+                "yAxis": {
+                  "left": {
+                    "label": "Value"
+                  }
+                }
+              }
+            },
+            {
+              "type": "metric",
+              "properties": {
+                "metrics": [
+                  ["AWS/NetworkFlowMonitor", "BytesIn", {"stat": "Sum"}],
+                  [".", "BytesOut", {"stat": "Sum"}]
+                ],
+                "period": 300,
+                "stat": "Sum",
+                "region": "${AWS::Region}",
+                "title": "Network Traffic Volume",
+                "yAxis": {
+                  "left": {
+                    "label": "Bytes"
+                  }
+                }
+              }
+            },
+            {
+              "type": "metric",
+              "properties": {
+                "metrics": [
+                  ["AWS/NetworkFlowMonitor", "PacketsIn", {"stat": "Sum"}],
+                  [".", "PacketsOut", {"stat": "Sum"}]
+                ],
+                "period": 300,
+                "stat": "Sum",
+                "region": "${AWS::Region}",
+                "title": "Packet Counts",
+                "yAxis": {
+                  "left": {
+                    "label": "Packets"
+                  }
+                }
+              }
+            },
+            {
+              "type": "metric",
+              "properties": {
+                "metrics": [
+                  ["AWS/NetworkFlowMonitor", "Retransmissions", {"stat": "Sum"}]
+                ],
+                "period": 300,
+                "stat": "Sum",
+                "region": "${AWS::Region}",
+                "title": "TCP Retransmissions",
+                "yAxis": {
+                  "left": {
+                    "label": "Count"
+                  }
+                }
+              }
+            }
+          ]
+        }
+
+# ==========================================
+# 출력값
+# OUTPUTS
+# ==========================================
+Outputs:
+  AgentInstallationStatus:
+    Description: Status of Network Flow Monitor agent installation (Step Functions execution)
+    Value: !GetAtt NetworkFlowMonitorAgentInstaller.Status
+    Export:
+      Name: !Sub '${AWS::StackName}-agent-installations'
+
+  AgentInstallationExecutionArn:
+    Description: Step Functions execution ARN for agent installation
+    Value: !GetAtt NetworkFlowMonitorAgentInstaller.ExecutionArn
+    Export:
+      Name: !Sub '${AWS::StackName}-agent-execution-arn'
+
+  AgentInstallationMessage:
+    Description: Message about agent installation process
+    Value: !GetAtt NetworkFlowMonitorAgentInstaller.Message
+    Export:
+      Name: !Sub '${AWS::StackName}-agent-message'
+
+  NetworkFlowMonitorArn:
+    Description: ARN of the Unified Network Flow Monitor
+    Value: !GetAtt UnifiedNetworkFlowMonitor.MonitorArn
+    Export:
+      Name: !Sub '${AWS::StackName}-monitor-arn'
+
+  MonitorName:
+    Description: Name of the Unified Network Flow Monitor
+    Value: !GetAtt UnifiedNetworkFlowMonitor.MonitorName
+    Export:
+      Name: !Sub '${AWS::StackName}-monitor-name'
+
+  MonitorStatus:
+    Description: Status of the Unified Network Flow Monitor
+    Value: !GetAtt UnifiedNetworkFlowMonitor.MonitorStatus
+    Export:
+      Name: !Sub '${AWS::StackName}-monitor-status'
+
+  MonitoredVPCs:
+    Description: VPC IDs being monitored
+    Value: !GetAtt UnifiedNetworkFlowMonitor.VpcIds
+    Export:
+      Name: !Sub '${AWS::StackName}-monitored-vpcs'
+
+  VPCCount:
+    Description: Number of VPCs being monitored
+    Value: !GetAtt UnifiedNetworkFlowMonitor.VpcCount
+    Export:
+      Name: !Sub '${AWS::StackName}-vpc-count'
+
+  ScopeArn:
+    Description: ARN of the Network Flow Monitor Scope
+    Value: !GetAtt UnifiedNetworkFlowMonitor.ScopeArn
+    Export:
+      Name: !Sub '${AWS::StackName}-scope-arn'
+
+  LogGroupName:
+    Description: CloudWatch Log Group for Network Flow Monitor
+    Value: !Ref NetworkFlowMonitorLogGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-log-group'
+
+  DashboardURL:
+    Description: CloudWatch Dashboard URL for Network Flow Monitor
+    Value: !Sub 'https://console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name=${MonitorName}-dashboard'
+
+  MonitorConsoleURL:
+    Description: AWS Console URL for the Unified Network Flow Monitor
+    Value: !Sub 'https://console.aws.amazon.com/networkflowmonitor/home?region=${AWS::Region}#/monitors/${UnifiedNetworkFlowMonitor.MonitorName}'
+
+  LocalResources:
+    Description: Local VPC resources being monitored
+    Value: !Sub '${AppVPCId}, ${ReportingVPCId}'
+
+  RemoteResource:
+    Description: Remote resource being monitored
+    Value: !Sub '${AWS::Region} (AWS Region)'
+
+  LambdaFunctionArn:
+    Description: ARN of the Custom Resource Lambda Function
+    Value: !GetAtt NetworkFlowMonitorLambda.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-lambda-arn'
+
+  DeploymentSequence:
+    Description: Deployment sequence followed
+    Value: 'Prerequisites: network-flow-monitor-enable stack must be deployed first. Then: 1. Install agents on instances -> 2. Create Network Flow Monitor'

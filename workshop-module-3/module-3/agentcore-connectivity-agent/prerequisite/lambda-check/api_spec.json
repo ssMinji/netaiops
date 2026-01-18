@@ -1,0 +1,32 @@
+[
+    {
+        "name": "connectivity-check", 
+        "description": "Analyze network path between two AWS resources using VPC Reachability Analyzer. Use dns-resolve tool first if working with DNS names instead of instance IDs.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Natural language query describing the connectivity analysis needed"
+                },
+                "source_resource": {
+                    "type": "string", 
+                    "description": "Source resource identifier (EC2 instance ID, ARN, etc.)"
+                },
+                "destination_resource": {
+                    "type": "string",
+                    "description": "Destination resource identifier (EC2 instance ID, ARN, etc.)"
+                },
+                "protocol": {
+                    "type": "string",
+                    "description": "Protocol to analyze (TCP, UDP, ICMP)"
+                },
+                "port": {
+                    "type": "string", 
+                    "description": "Port number for the analysis"
+                }
+            },
+            "required": ["query"]
+        }
+    }
+]

@@ -1,0 +1,30 @@
+graph TD
+    A[analyze_tcp_performance] --> B[Parse time_window]
+    B --> C[Calculate start_time & end_time]
+    C --> D[Get VPC Flow Log Groups]
+    D --> E{Log groups found?}
+    E -->|Yes| F[Build CloudWatch Logs Insights Query]
+    E -->|No| G[Skip Query Analysis]
+    F --> H{Port specified?}
+    H -->|Yes| I[Add port filter to query]
+    H -->|No| J[Use query without port filter]
+    I --> K[Start CloudWatch Logs Query]
+    J --> K
+    K --> L[Wait for Query Completion]
+    L --> M{Query completed?}
+    M -->|Yes| N[Extract TCP Metrics]
+    M -->|Timeout| O[Use Default Metrics]
+    N --> P[Generate Performance Recommendations]
+    O --> P
+    G --> P
+    P --> Q[Return TCP Analysis Results]
+    
+    subgraph "AWS Services Used"
+        R[CloudWatch Logs describe_log_groups]
+        S[CloudWatch Logs start_query]
+        T[CloudWatch Logs get_query_results]
+    end
+    
+    D --> R
+    K --> S
+    L --> T

@@ -1,0 +1,4337 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Image Sharing Sample Application - 3 Lambda Architecture'
+
+Parameters:
+  DBUsername:
+    Type: String
+    Default: admin
+    Description: Database administrator username
+    
+  DBPassword:
+    Type: String
+    NoEcho: true
+    MinLength: 8
+    Default: SapConcurWorkshop25
+    Description: Database administrator password
+    
+Resources:
+  # ==========================================
+  # S3 BUCKET FOR IMAGE CONTENT
+  # ==========================================
+  ImageBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    Properties:
+      BucketName: !Sub "sample-app-${AWS::AccountId}-image-${AWS::StackName}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders: ['*']
+            AllowedMethods: [GET, HEAD]
+            AllowedOrigins: ['*']
+            MaxAge: 3600
+
+  ImageBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref ImageBucket
+      PolicyDocument:
+        Statement:
+          - Sid: AllowLambdaAccess
+            Effect: Allow
+            Principal:
+              AWS: !GetAtt LambdaExecutionRole.Arn
+            Action: 
+              - s3:GetObject
+              - s3:PutObject
+              - s3:DeleteObject
+            Resource: !Sub "arn:aws:s3:::${ImageBucket}/*"
+          - Sid: AllowLambdaListBucket
+            Effect: Allow
+            Principal:
+              AWS: !GetAtt LambdaExecutionRole.Arn
+            Action: 
+              - s3:ListBucket
+            Resource: !Sub "arn:aws:s3:::${ImageBucket}"
+
+  # ==========================================
+  # BASTION HOST IN APP VPC
+  # ==========================================
+  BastionSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for Bastion EC2 instance
+      VpcId: !Ref AppVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          CidrIp: 10.2.0.0/16  # Allow access from App VPC
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          CidrIp: 10.1.0.0/16  # Allow access from Reporting VPC
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 10.2.0.0/16
+          Description: Allow HTTPS to VPC endpoints
+      Tags:
+        - Key: Name
+          Value: sample-app-Bastion-SecurityGroup
+
+  BastionInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        # Core AWS managed policies - reduced to stay under 10 policy limit
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - arn:aws:iam::aws:policy/PowerUserAccess
+        - arn:aws:iam::aws:policy/IAMFullAccess
+        # CloudWatch Network Flow Monitor agent permissions
+        - arn:aws:iam::aws:policy/CloudWatchNetworkFlowMonitorAgentPublishPolicy
+      Policies:
+        # Only keep essential custom policies that can't be replaced by managed policies
+        - PolicyName: ProjectSpecificAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # SSM Parameter Store access for session tokens
+              - Effect: Allow
+                Action:
+                  - ssm:PutParameter
+                  - ssm:GetParameter
+                  - ssm:GetParameters
+                  - ssm:GetParametersByPath
+                  - ssm:DeleteParameter
+                  - ssm:DeleteParameters
+                  - ssm:DescribeParameters
+                Resource: 
+                  - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${AWS::StackName}/session-tokens/*'
+                  - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/*agentcore*'
+                  - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/*cognito*'
+                  - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/*troubleshooting*'
+              # Bedrock AgentCore specific permissions (not covered by managed policies)
+              - Effect: Allow
+                Action:
+                  - bedrock:CreateAgentCore
+                  - bedrock:DeleteAgentCore
+                  - bedrock:GetAgentCore
+                  - bedrock:ListAgentCores
+                  - bedrock:UpdateAgentCore
+                  - bedrock:CreateAgentCoreRuntime
+                  - bedrock:DeleteAgentCoreRuntime
+                  - bedrock:GetAgentCoreRuntime
+                  - bedrock:ListAgentCoreRuntimes
+                  - bedrock:UpdateAgentCoreRuntime
+                  - bedrock:InvokeAgentCore
+                  - bedrock-agentcore:GetWorkloadAccessTokenForJWT
+                  - bedrock-agentcore:InvokeRuntime
+                  - bedrock-agentcore:GetWorkloadAccessToken
+                Resource: '*'
+              # RDS API access - allow all RDS operations
+              - Effect: Allow
+                Action:
+                  - rds:DescribeDBInstances
+                  - rds:DescribeDBClusters
+                  - rds:DescribeDBSubnetGroups
+                  - rds:DescribeDBParameterGroups
+                  - rds:DescribeDBClusterParameterGroups
+                  - rds:ListTagsForResource
+                Resource: '*'
+              # CloudWatch API access
+              - Effect: Allow
+                Action:
+                  - cloudwatch:ListMetrics
+                  - cloudwatch:GetMetricStatistics
+                  - cloudwatch:GetMetricData
+                  - cloudwatch:DescribeAlarms
+                  - cloudwatch:PutMetricData
+                Resource: '*'
+              # Lambda API access
+              - Effect: Allow
+                Action:
+                  - lambda:ListFunctions
+                  - lambda:GetFunction
+                  - lambda:GetFunctionConfiguration
+                  - lambda:InvokeFunction
+                Resource: '*'
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-bastion-role'
+
+  BastionInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref BastionInstanceRole
+
+  BastionEC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Sub '{{resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64}}'
+      InstanceType: t3.micro
+      SubnetId: !Ref AppPrivateSubnet1
+      SecurityGroupIds:
+        - !Ref BastionSecurityGroup
+      IamInstanceProfile: !Ref BastionInstanceProfile
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          yum update -y
+          yum install -y mysql amazon-ssm-agent
+          
+          # Enable and start SSM agent
+          systemctl enable amazon-ssm-agent
+          systemctl start amazon-ssm-agent
+          
+          echo "Bastion EC2 instance setup complete"
+      Tags:
+        - Key: Name
+          Value: sample-app-BastionEC2Instance
+        - Key: NetworkFlowMonitor
+          Value: enabled
+
+  # ==========================================
+  # APP VPC INFRASTRUCTURE
+  # ==========================================
+  AppVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.2.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: sample-app-App-VPC
+
+  AppPublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref AppVPC
+      CidrBlock: 10.2.1.0/24
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: sample-app-App-Public-Subnet-1
+
+  AppPublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref AppVPC
+      CidrBlock: 10.2.2.0/24
+      AvailabilityZone: !Select [1, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: sample-app-App-Public-Subnet-2
+
+  AppPrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref AppVPC
+      CidrBlock: 10.2.3.0/24
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: sample-app-App-Private-Subnet-1
+
+  AppPrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref AppVPC
+      CidrBlock: 10.2.4.0/24
+      AvailabilityZone: !Select [1, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: sample-app-App-Private-Subnet-2
+
+  AppInternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: sample-app-App-IGW
+
+  AppInternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref AppInternetGateway
+      VpcId: !Ref AppVPC
+
+  AppNATGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt AppNATGatewayEIP.AllocationId
+      SubnetId: !Ref AppPublicSubnet1
+      Tags:
+        - Key: Name
+          Value: sample-app-App-NAT-Gateway
+
+  AppNATGatewayEIP:
+    Type: AWS::EC2::EIP
+    DependsOn: AppInternetGatewayAttachment
+    Properties:
+      Domain: vpc
+
+  AppPublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref AppVPC
+      Tags:
+        - Key: Name
+          Value: sample-app-App-Public-Routes
+
+  AppDefaultPublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: AppInternetGatewayAttachment
+    Properties:
+      RouteTableId: !Ref AppPublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref AppInternetGateway
+
+  AppPublicSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref AppPublicRouteTable
+      SubnetId: !Ref AppPublicSubnet1
+
+  AppPublicSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref AppPublicRouteTable
+      SubnetId: !Ref AppPublicSubnet2
+
+  AppPrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref AppVPC
+      Tags:
+        - Key: Name
+          Value: sample-app-App-Private-Routes
+
+  AppDefaultPrivateRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref AppPrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref AppNATGateway
+
+  AppPrivateSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref AppPrivateRouteTable
+      SubnetId: !Ref AppPrivateSubnet1
+
+  AppPrivateSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref AppPrivateRouteTable
+      SubnetId: !Ref AppPrivateSubnet2
+
+  # ==========================================
+  # REPORTING VPC INFRASTRUCTURE
+  # ==========================================
+  ReportingVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.1.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: sample-app-Reporting-VPC
+
+  ReportingPublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref ReportingVPC
+      CidrBlock: 10.1.1.0/24
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: sample-app-Reporting-Public-Subnet
+
+  ReportingPrivateSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref ReportingVPC
+      CidrBlock: 10.1.2.0/24
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: sample-app-Reporting-Private-Subnet
+
+  ReportingInternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: sample-app-Reporting-IGW
+
+  ReportingInternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref ReportingInternetGateway
+      VpcId: !Ref ReportingVPC
+
+  ReportingNATGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt ReportingNATGatewayEIP.AllocationId
+      SubnetId: !Ref ReportingPublicSubnet
+      Tags:
+        - Key: Name
+          Value: sample-app-Reporting-NAT-Gateway
+
+  ReportingNATGatewayEIP:
+    Type: AWS::EC2::EIP
+    DependsOn: ReportingInternetGatewayAttachment
+    Properties:
+      Domain: vpc
+
+  ReportingPublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref ReportingVPC
+      Tags:
+        - Key: Name
+          Value: sample-app-Reporting-Public-Routes
+
+  ReportingDefaultPublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: ReportingInternetGatewayAttachment
+    Properties:
+      RouteTableId: !Ref ReportingPublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref ReportingInternetGateway
+
+  ReportingPublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref ReportingPublicRouteTable
+      SubnetId: !Ref ReportingPublicSubnet
+
+  ReportingPrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref ReportingVPC
+      Tags:
+        - Key: Name
+          Value: sample-app-Reporting-Private-Routes
+
+  ReportingDefaultPrivateRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref ReportingPrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref ReportingNATGateway
+
+  ReportingPrivateSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref ReportingPrivateRouteTable
+      SubnetId: !Ref ReportingPrivateSubnet
+
+  ReportingToAppVPCRoute:
+    Type: AWS::EC2::Route
+    DependsOn: ReportingVPCTransitGatewayAttachment
+    Properties:
+      RouteTableId: !Ref ReportingPrivateRouteTable
+      DestinationCidrBlock: 10.2.0.0/16
+      TransitGatewayId: !Ref TransitGateway
+
+  # ==========================================
+  # VPC ENDPOINTS FOR APP VPC
+  # ==========================================
+  AppVPCEndpointSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for VPC Endpoints in App VPC
+      VpcId: !Ref AppVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 10.2.0.0/16
+          Description: Allow HTTPS from App VPC
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          SourceSecurityGroupId: !Ref BastionSecurityGroup
+          Description: Allow HTTPS from Bastion instances
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: Allow all outbound traffic
+      Tags:
+        - Key: Name
+          Value: sample-app-App-VPC-Endpoint-SG
+
+  # SSM VPC Endpoint for App VPC
+  AppSSMVPCEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref AppVPC
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ssm'
+      VpcEndpointType: Interface
+      SubnetIds:
+        - !Ref AppPrivateSubnet1
+        - !Ref AppPrivateSubnet2
+      SecurityGroupIds:
+        - !Ref AppVPCEndpointSecurityGroup
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: '*'
+            Action:
+              - 'ssm:*'
+            Resource: '*'
+
+  # SSM Messages VPC Endpoint for App VPC
+  AppSSMMessagesVPCEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref AppVPC
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ssmmessages'
+      VpcEndpointType: Interface
+      SubnetIds:
+        - !Ref AppPrivateSubnet1
+        - !Ref AppPrivateSubnet2
+      SecurityGroupIds:
+        - !Ref AppVPCEndpointSecurityGroup
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: '*'
+            Action:
+              - 'ssmmessages:*'
+            Resource: '*'
+
+  # EC2 Messages VPC Endpoint for App VPC
+  AppEC2MessagesVPCEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref AppVPC
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ec2messages'
+      VpcEndpointType: Interface
+      SubnetIds:
+        - !Ref AppPrivateSubnet1
+        - !Ref AppPrivateSubnet2
+      SecurityGroupIds:
+        - !Ref AppVPCEndpointSecurityGroup
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: '*'
+            Action:
+              - 'ec2messages:*'
+            Resource: '*'
+
+  # EC2 VPC Endpoint for App VPC
+  AppEC2VPCEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref AppVPC
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ec2'
+      VpcEndpointType: Interface
+      SubnetIds:
+        - !Ref AppPrivateSubnet1
+        - !Ref AppPrivateSubnet2
+      SecurityGroupIds:
+        - !Ref AppVPCEndpointSecurityGroup
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: '*'
+            Action:
+              - 'ec2:*'
+            Resource: '*'
+
+  # ==========================================
+  # VPC ENDPOINTS FOR REPORTING VPC
+  # ==========================================
+  ReportingVPCEndpointSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for VPC Endpoints in Reporting VPC
+      VpcId: !Ref ReportingVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 10.1.0.0/16
+          Description: Allow HTTPS from Reporting VPC
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          SourceSecurityGroupId: !Ref ReportingServerSecurityGroup
+          Description: Allow HTTPS from Reporting Server instances
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: Allow all outbound traffic
+      Tags:
+        - Key: Name
+          Value: sample-app-Reporting-VPC-Endpoint-SG
+
+  # EC2 VPC Endpoint for Reporting VPC
+  ReportingEC2VPCEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref ReportingVPC
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ec2'
+      VpcEndpointType: Interface
+      SubnetIds:
+        - !Ref ReportingPrivateSubnet
+      SecurityGroupIds:
+        - !Ref ReportingVPCEndpointSecurityGroup
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: '*'
+            Action:
+              - 'ec2:*'
+            Resource: '*'
+
+  # EC2 Messages VPC Endpoint for Reporting VPC
+  ReportingEC2MessagesVPCEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref ReportingVPC
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ec2messages'
+      VpcEndpointType: Interface
+      SubnetIds:
+        - !Ref ReportingPrivateSubnet
+      SecurityGroupIds:
+        - !Ref ReportingVPCEndpointSecurityGroup
+      PrivateDnsEnabled: true
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: '*'
+            Action:
+              - 'ec2messages:*'
+            Resource: '*'
+
+  # SSM VPC Endpoint for Reporting VPC
+  ReportingSSMVPCEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref ReportingVPC
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ssm'
+      VpcEndpointType: Interface
+      SubnetIds:
+        - !Ref ReportingPrivateSubnet
+      SecurityGroupIds:
+        - !Ref ReportingVPCEndpointSecurityGroup
+      PrivateDnsEnabled: true
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: '*'
+            Action:
+              - 'ssm:*'
+            Resource: '*'
+
+  # SSM Messages VPC Endpoint for Reporting VPC
+  ReportingSSMMessagesVPCEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref ReportingVPC
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ssmmessages'
+      VpcEndpointType: Interface
+      SubnetIds:
+        - !Ref ReportingPrivateSubnet
+      SecurityGroupIds:
+        - !Ref ReportingVPCEndpointSecurityGroup
+      PrivateDnsEnabled: true
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: '*'
+            Action:
+              - 'ssmmessages:*'
+            Resource: '*'
+
+  # ==========================================
+  # TRANSIT GATEWAY
+  # ==========================================
+  TransitGateway:
+    Type: AWS::EC2::TransitGateway
+    Properties:
+      AmazonSideAsn: 65000
+      Description: Transit Gateway connecting App and Reporting VPCs
+      Tags:
+        - Key: Name
+          Value: sample-app-Video-Hosting-TGW
+
+  AppVPCTransitGatewayAttachment:
+    Type: AWS::EC2::TransitGatewayAttachment
+    Properties:
+      TransitGatewayId: !Ref TransitGateway
+      VpcId: !Ref AppVPC
+      SubnetIds:
+        - !Ref AppPrivateSubnet1
+        - !Ref AppPrivateSubnet2
+      Tags:
+        - Key: Name
+          Value: sample-app-App-VPC-TGW-Attachment
+
+  ReportingVPCTransitGatewayAttachment:
+    Type: AWS::EC2::TransitGatewayAttachment
+    Properties:
+      TransitGatewayId: !Ref TransitGateway
+      VpcId: !Ref ReportingVPC
+      SubnetIds:
+        - !Ref ReportingPrivateSubnet
+      Tags:
+        - Key: Name
+          Value: sample-app-Reporting-VPC-TGW-Attachment
+
+  # Transit Gateway Route Tables
+  TransitGatewayRouteTable:
+    Type: AWS::EC2::TransitGatewayRouteTable
+    Properties:
+      TransitGatewayId: !Ref TransitGateway
+      Tags:
+        - Key: Name
+          Value: sample-app-TGW-Route-Table
+
+  AppVPCRoute:
+    Type: AWS::EC2::TransitGatewayRoute
+    Properties:
+      DestinationCidrBlock: 10.2.0.0/16
+      TransitGatewayAttachmentId: !Ref AppVPCTransitGatewayAttachment
+      TransitGatewayRouteTableId: !Ref TransitGatewayRouteTable
+
+  ReportingVPCRoute:
+    Type: AWS::EC2::TransitGatewayRoute
+    Properties:
+      DestinationCidrBlock: 10.1.0.0/16
+      TransitGatewayAttachmentId: !Ref ReportingVPCTransitGatewayAttachment
+      TransitGatewayRouteTableId: !Ref TransitGatewayRouteTable
+
+  # Update private route tables to include TGW routes
+  AppToReportingRoute:
+    Type: AWS::EC2::Route
+    DependsOn: AppVPCTransitGatewayAttachment
+    Properties:
+      RouteTableId: !Ref AppPrivateRouteTable
+      DestinationCidrBlock: 10.1.0.0/16
+      TransitGatewayId: !Ref TransitGateway
+
+  # ==========================================
+  # SECURITY GROUPS
+  # ==========================================
+  ALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for Application Load Balancer
+      VpcId: !Ref AppVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: sample-app-ALB-SecurityGroup
+
+  LambdaSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for Lambda functions
+      VpcId: !Ref AppVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourceSecurityGroupId: !Ref ALBSecurityGroup
+          Description: Allow HTTP from ALB
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          SourceSecurityGroupId: !Ref ALBSecurityGroup
+          Description: Allow HTTPS from ALB
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: sample-app-Lambda-SecurityGroup
+
+  DatabaseSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for RDS database
+      VpcId: !Ref AppVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          SourceSecurityGroupId: !Ref LambdaSecurityGroup
+          Description: Allow MySQL from Lambda
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          SourceSecurityGroupId: !Ref BastionSecurityGroup
+          Description: Allow MySQL from Bastion
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          CidrIp: 10.1.0.0/16
+          Description: Allow MySQL from Reporting VPC
+      Tags:
+        - Key: Name
+          Value: sample-app-Database-SecurityGroup
+
+  ReportingServerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for Reporting EC2 instance
+      VpcId: !Ref ReportingVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 10.1.0.0/16
+          Description: Allow HTTPS to VPC endpoints
+      Tags:
+        - Key: Name
+          Value: sample-app-ReportingServer-SecurityGroup
+
+  # ==========================================
+  # RDS DATABASE
+  # ==========================================
+  DatabaseSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Subnet group for RDS database
+      SubnetIds:
+        - !Ref AppPrivateSubnet1
+        - !Ref AppPrivateSubnet2
+      Tags:
+        - Key: Name
+          Value: sample-app-Database-SubnetGroup
+
+  ImageMetadataDatabase:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceIdentifier: sample-app-image-metadata-db
+      DBInstanceClass: db.t3.micro
+      Engine: mysql
+      EngineVersion: '8.0'
+      MasterUsername: !Ref DBUsername
+      MasterUserPassword: !Ref DBPassword
+      AllocatedStorage: 20
+      StorageType: gp2
+      VPCSecurityGroups:
+        - !Ref DatabaseSecurityGroup
+      DBSubnetGroupName: !Ref DatabaseSubnetGroup
+      BackupRetentionPeriod: 7
+      MultiAZ: false
+      PubliclyAccessible: false
+      StorageEncrypted: true
+      Tags:
+        - Key: Name
+          Value: sample-app-ImageMetadataDatabase
+
+  # ==========================================
+  # IAM ROLES AND POLICIES
+  # ==========================================
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+      Policies:
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                Resource: !Sub "arn:aws:s3:::${ImageBucket}/*"
+        - PolicyName: CloudWatchLogs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - cloudwatch:PutMetricData
+                Resource: "*"
+
+  # ==========================================
+  # LAMBDA LAYER FOR PYMYSQL
+  # ==========================================
+  PyMySQLLayer:
+    Type: AWS::Lambda::LayerVersion
+    DependsOn: CreatePyMySQLLayerResource
+    Properties:
+      LayerName: pymysql-layer
+      Description: PyMySQL library for Lambda functions
+      Content:
+        S3Bucket: !Ref ImageBucket
+        S3Key: layers/pymysql-layer.zip
+      CompatibleRuntimes:
+        - python3.9
+      LicenseInfo: MIT
+
+  # Custom resource to create PyMySQL layer
+  CreatePyMySQLLayerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: sample-app-create-pymysql-layer
+      Runtime: python3.9
+      Handler: index.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 300
+      Code:
+        ZipFile: |
+          import boto3
+          import json
+          import cfnresponse
+          import zipfile
+          import io
+          import subprocess
+          import os
+          import tempfile
+          
+          def lambda_handler(event, context):
+              print(f"Lambda invoked with event: {json.dumps(event)}")
+              
+              try:
+                  s3_client = boto3.client('s3')
+                  bucket_name = event['ResourceProperties']['BucketName']
+                  
+                  if event['RequestType'] == 'Create' or event['RequestType'] == 'Update':
+                      print("Creating PyMySQL layer...")
+                      
+                      # Create a temporary directory
+                      with tempfile.TemporaryDirectory() as temp_dir:
+                          python_dir = os.path.join(temp_dir, 'python')
+                          os.makedirs(python_dir)
+                          
+                          # Install PyMySQL using pip
+                          subprocess.check_call([
+                              'pip', 'install', 'PyMySQL==1.0.2', 
+                              '--target', python_dir,
+                              '--no-deps'
+                          ])
+                          
+                          # Create zip file
+                          zip_buffer = io.BytesIO()
+                          with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+                              for root, dirs, files in os.walk(temp_dir):
+                                  for file in files:
+                                      file_path = os.path.join(root, file)
+                                      arc_name = os.path.relpath(file_path, temp_dir)
+                                      zip_file.write(file_path, arc_name)
+                          
+                          # Upload to S3
+                          zip_buffer.seek(0)
+                          s3_client.put_object(
+                              Bucket=bucket_name,
+                              Key='layers/pymysql-layer.zip',
+                              Body=zip_buffer.getvalue(),
+                              ContentType='application/zip'
+                          )
+                          
+                          print("PyMySQL layer created and uploaded successfully")
+                      
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+                      
+                  elif event['RequestType'] == 'Delete':
+                      # Clean up the layer zip file
+                      try:
+                          s3_client.delete_object(Bucket=bucket_name, Key='layers/pymysql-layer.zip')
+                      except:
+                          pass  # Ignore errors during cleanup
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+                      
+              except Exception as e:
+                  print(f"Error: {str(e)}")
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {})
+
+  CreatePyMySQLLayerResource:
+    Type: AWS::CloudFormation::CustomResource
+    Properties:
+      ServiceToken: !GetAtt CreatePyMySQLLayerFunction.Arn
+      BucketName: !Ref ImageBucket
+    DependsOn: ImageBucket
+
+  ReportingServerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
+        # CloudWatch Network Flow Monitor agent permissions
+        - arn:aws:iam::aws:policy/CloudWatchNetworkFlowMonitorAgentPublishPolicy
+      Policies:
+        - PolicyName: CloudWatchAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cloudwatch:PutMetricData
+                  - cloudwatch:GetMetricStatistics
+                  - cloudwatch:ListMetrics
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: "*"
+        - PolicyName: SSMParameterAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                  - ssm:GetParameters
+                  - ssm:PutParameter
+                  - ssm:DeleteParameter
+                  - ssm:GetParametersByPath
+                  - ssm:DescribeParameters
+                Resource: "*"
+
+  ReportingServerInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref ReportingServerRole
+
+
+  # ==========================================
+  # LAMBDA FUNCTIONS - 3 SEPARATE FUNCTIONS
+  # ==========================================
+  
+  # Custom resource to upload frontend files and download re:Invent images to S3
+  UploadContentFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: sample-app-upload-content
+      Runtime: python3.9
+      Handler: index.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 300
+      Environment:
+        Variables:
+          FORCE_UPDATE: !Sub "${AWS::StackName}-${AWS::Region}-v17"
+      Code:
+        ZipFile: |
+          import boto3
+          import json
+          import cfnresponse
+          import urllib.request
+          import urllib.error
+          import base64
+          
+          def lambda_handler(event, context):
+              print(f"Lambda invoked with event: {json.dumps(event)}")
+              
+              try:
+                  s3_client = boto3.client('s3')
+                  bucket_name = event['ResourceProperties']['BucketName']
+                  print(f"Working with S3 bucket: {bucket_name}")
+                  
+                  if event['RequestType'] == 'Create' or event['RequestType'] == 'Update':
+                      print("=== STARTING IMAGE DOWNLOAD AND UPLOAD PROCESS ===")
+                      
+                      # Simple fallback image data (small JPEG)
+                      fallback_image = base64.b64decode('/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQH/2wBDAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQH/wAARCAEsAZADASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwD9/KKKKAP/2Q==')
+                      
+                      # Image URLs and metadata - Updated with working URLs
+                      images_to_process = [
+                          {'url': 'https://ws-assets-prod-iad-r-iad-ed304a55c2ca1aee.s3.us-east-1.amazonaws.com/25286efc-5ab4-45b2-a654-bc31f00e0426/acme-image-gallery/riv20.jpg', 'key': 'images/riv-20.jpeg', 'title': 're:Invent 2020'},
+                          {'url': 'https://ws-assets-prod-iad-r-iad-ed304a55c2ca1aee.s3.us-east-1.amazonaws.com/25286efc-5ab4-45b2-a654-bc31f00e0426/acme-image-gallery/riv-21.jpg', 'key': 'images/riv-21.jpeg', 'title': 're:Invent 2021'},
+                          {'url': 'https://ws-assets-prod-iad-r-iad-ed304a55c2ca1aee.s3.us-east-1.amazonaws.com/25286efc-5ab4-45b2-a654-bc31f00e0426/acme-image-gallery/riv-22.jpg', 'key': 'images/riv-22.jpeg', 'title': 're:Invent 2022'},
+                          {'url': 'https://ws-assets-prod-iad-r-icn-ced060f0d38bc0b0.s3.ap-northeast-2.amazonaws.com/25286efc-5ab4-45b2-a654-bc31f00e0426/acme-image-gallery/riv-23.jpeg', 'key': 'images/riv-23.jpeg', 'title': 're:Invent 2023'},
+                          {'url': 'https://ws-assets-prod-iad-r-iad-ed304a55c2ca1aee.s3.us-east-1.amazonaws.com/25286efc-5ab4-45b2-a654-bc31f00e0426/acme-image-gallery/riv-24.png', 'key': 'images/riv-24.jpeg', 'title': 're:Invent 2024'},
+                          {'url': 'https://ws-assets-prod-iad-r-icn-ced060f0d38bc0b0.s3.ap-northeast-2.amazonaws.com/25286efc-5ab4-45b2-a654-bc31f00e0426/acme-image-gallery/riv-25.jpeg', 'key': 'images/riv-25.jpeg', 'title': 're:Invent 2025'}
+                      ]
+                      
+                      successful_uploads = 0
+                      
+                      for img_info in images_to_process:
+                          try:
+                              print(f"\n--- Processing {img_info['title']} ---")
+                              print(f"URL: {img_info['url']}")
+                              print(f"S3 Key: {img_info['key']}")
+                              
+                              # Download image from URL
+                              image_data = None
+                              try:
+                                  print("Attempting to download from URL...")
+                                  request = urllib.request.Request(img_info['url'])
+                                  request.add_header('User-Agent', 'Mozilla/5.0 (compatible; AWS Lambda)')
+                                  
+                                  with urllib.request.urlopen(request, timeout=30) as response:
+                                      if response.status == 200:
+                                          image_data = response.read()
+                                          print(f"? Downloaded {len(image_data)} bytes")
+                                      else:
+                                          print(f"? HTTP {response.status}")
+                              except Exception as download_error:
+                                  print(f"? Download failed: {str(download_error)}")
+                              
+                              # Use fallback if download failed
+                              if image_data is None:
+                                  print("Using fallback image...")
+                                  image_data = fallback_image
+                              
+                              # Determine content type based on key extension
+                              content_type = 'image/jpeg'  # Default
+                              if img_info['key'].lower().endswith('.png'):
+                                  content_type = 'image/png'
+                              elif img_info['key'].lower().endswith('.gif'):
+                                  content_type = 'image/gif'
+                              elif img_info['key'].lower().endswith('.webp'):
+                                  content_type = 'image/webp'
+                              
+                              # Upload to S3
+                              print(f"Uploading to S3: s3://{bucket_name}/{img_info['key']} with content-type: {content_type}")
+                              s3_client.put_object(
+                                  Bucket=bucket_name,
+                                  Key=img_info['key'],
+                                  Body=image_data,
+                                  ContentType=content_type,
+                                  Metadata={
+                                      'title': img_info['title'],
+                                      'source': 'lambda-upload'
+                                  }
+                              )
+                              print(f"? Successfully uploaded {img_info['key']}")
+                              
+                              successful_uploads += 1
+                              
+                          except Exception as process_error:
+                              print(f"? Error processing {img_info['title']}: {str(process_error)}")
+                              continue
+                      
+                      print(f"\n=== UPLOAD COMPLETE ===")
+                      print(f"Successfully uploaded {successful_uploads} out of {len(images_to_process)} images")
+                      
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+                      
+                  elif event['RequestType'] == 'Delete':
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+                      
+              except Exception as e:
+                  print(f"Error: {str(e)}")
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {})
+
+  # Custom resource to trigger content upload
+  UploadContentResource:
+    Type: AWS::CloudFormation::CustomResource
+    Properties:
+      ServiceToken: !GetAtt UploadContentFunction.Arn
+      BucketName: !Ref ImageBucket
+    DependsOn: ImageBucket
+
+  # ==========================================
+  # LAMBDA 1: HTML RENDERING AND DATABASE RETRIEVAL
+  # ==========================================
+  HTMLRenderingFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "sample-app-html-renderer-${AWS::StackName}"
+      Runtime: python3.9
+      Handler: index.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 30
+      Layers:
+        - !Ref PyMySQLLayer
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+        SubnetIds:
+          - !Ref AppPrivateSubnet1
+          - !Ref AppPrivateSubnet2
+      Environment:
+        Variables:
+          DB_HOST: !GetAtt ImageMetadataDatabase.Endpoint.Address
+          DB_USER: !Ref DBUsername
+          DB_PASSWORD: !Ref DBPassword
+          DB_NAME: image_metadata
+          LAYOUT_VERSION: "v5-force-redeploy"
+          FORCE_UPDATE: !Sub "${AWS::StackName}-${AWS::Region}-v19-${AWS::AccountId}"
+          DEPLOYMENT_TIME: "2025-09-30-20-30"
+      Code:
+        ZipFile: |
+          import json
+          import os
+          from datetime import datetime
+          
+          # Import pymysql - fail if not available
+          import pymysql
+          
+          # Global database connection
+          db_connection = None
+          db_initialized = False
+          
+          def get_db_connection():
+              """Get database connection"""
+              global db_connection
+              
+              if db_connection is None or not db_connection.open:
+                  try:
+                      db_connection = pymysql.connect(
+                          host=os.environ['DB_HOST'],
+                          user=os.environ['DB_USER'],
+                          password=os.environ['DB_PASSWORD'],
+                          database=os.environ['DB_NAME'],
+                          charset='utf8mb4',
+                          cursorclass=pymysql.cursors.DictCursor,
+                          autocommit=True
+                      )
+                      print("Database connection established")
+                  except Exception as e:
+                      print(f"Database connection error: {e}")
+                      # Fallback connection without specifying database
+                      try:
+                          db_connection = pymysql.connect(
+                              host=os.environ['DB_HOST'],
+                              user=os.environ['DB_USER'],
+                              password=os.environ['DB_PASSWORD'],
+                              charset='utf8mb4',
+                              cursorclass=pymysql.cursors.DictCursor,
+                              autocommit=True
+                          )
+                          print("Database connection established without database name")
+                      except Exception as e2:
+                          print(f"Fallback database connection error: {e2}")
+                          raise Exception("Failed to establish database connection")
+              
+              return db_connection
+          
+          def init_database():
+              """Initialize database connection and create tables"""
+              global db_initialized
+              
+              if db_initialized:
+                  return True
+              
+              try:
+                  conn = get_db_connection()
+                  if conn is None:
+                      return False
+                  
+                  with conn.cursor() as cursor:
+                      # Create database if it doesn't exist
+                      cursor.execute(f"CREATE DATABASE IF NOT EXISTS {os.environ['DB_NAME']}")
+                      cursor.execute(f"USE {os.environ['DB_NAME']}")
+                      
+                      # Create images table
+                      cursor.execute("""
+                          CREATE TABLE IF NOT EXISTS images (
+                              id INT PRIMARY KEY,
+                              title VARCHAR(255) NOT NULL,
+                              description TEXT,
+                              image_url VARCHAR(500) NOT NULL,
+                              width INT,
+                              height INT,
+                              likes_count INT DEFAULT 0,
+                              shares_count INT DEFAULT 0,
+                              views_count INT DEFAULT 0,
+                              created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                              updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+                          )
+                      """)
+                      
+                      # Create interactions table for tracking individual interactions
+                      cursor.execute("""
+                          CREATE TABLE IF NOT EXISTS image_interactions (
+                              id INT AUTO_INCREMENT PRIMARY KEY,
+                              image_id INT NOT NULL,
+                              action ENUM('like', 'share', 'view') NOT NULL,
+                              session_id VARCHAR(255),
+                              ip_address VARCHAR(45),
+                              user_agent TEXT,
+                              created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                              FOREIGN KEY (image_id) REFERENCES images(id)
+                          )
+                      """)
+                      
+                      # Create Sev1 ticket correspondence history table
+                      cursor.execute("""
+                          CREATE TABLE IF NOT EXISTS sev1_correspondence_history (
+                              id INT AUTO_INCREMENT PRIMARY KEY,
+                              ticket_id VARCHAR(50) NOT NULL,
+                              correspondence_id INT NOT NULL,
+                              author VARCHAR(100) NOT NULL,
+                              message TEXT NOT NULL,
+                              message_type ENUM('system', 'user', 'agent') DEFAULT 'user',
+                              module_name VARCHAR(100),
+                              module_progress_before INT DEFAULT 0,
+                              module_progress_after INT DEFAULT 0,
+                              module_completed BOOLEAN DEFAULT FALSE,
+                              session_id VARCHAR(255),
+                              ip_address VARCHAR(45),
+                              user_agent TEXT,
+                              created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                              updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                              INDEX idx_ticket_id (ticket_id),
+                              INDEX idx_correspondence_id (correspondence_id),
+                              INDEX idx_created_at (created_at),
+                              INDEX idx_module_completed (module_completed)
+                          )
+                      """)
+                      
+                      # Create workshop modules progress tracking table
+                      cursor.execute("""
+                          CREATE TABLE IF NOT EXISTS workshop_modules (
+                              id INT AUTO_INCREMENT PRIMARY KEY,
+                              module_name VARCHAR(100) NOT NULL UNIQUE,
+                              display_name VARCHAR(150) NOT NULL,
+                              current_progress INT DEFAULT 0,
+                              max_progress INT DEFAULT 100,
+                              is_completed BOOLEAN DEFAULT FALSE,
+                              completion_date TIMESTAMP NULL,
+                              created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                              updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                              INDEX idx_module_name (module_name),
+                              INDEX idx_is_completed (is_completed)
+                          )
+                      """)
+                      
+                      # Initialize workshop modules if not exists - in the correct order
+                      workshop_modules = [
+                          ('agentcore_runtime', 'AgentCore Runtime', 0, 100),
+                          ('agentcore_memory', 'AgentCore Memory', 0, 100),
+                          ('a2a', 'A2A', 0, 100),
+                          ('cloudwatch_investigations', 'CloudWatch Investigations', 0, 100)
+                      ]
+                      
+                      for module_name, display_name, progress, max_progress in workshop_modules:
+                          cursor.execute("""
+                              INSERT INTO workshop_modules 
+                              (module_name, display_name, current_progress, max_progress, is_completed) 
+                              VALUES (%s, %s, %s, %s, %s)
+                              ON DUPLICATE KEY UPDATE
+                              display_name = VALUES(display_name),
+                              updated_at = CURRENT_TIMESTAMP
+                          """, (module_name, display_name, progress, max_progress, False))
+                      
+                      # Insert initial image data if not exists - starting with zero counts
+                      initial_images = [
+                          (1, 're:Invent 2020', 're:Invent 2020', '/images/riv-20.jpeg', 1200, 800, 0, 0, 0),
+                          (2, 're:Invent 2021', 're:Invent 2021', '/images/riv-21.jpeg', 1400, 900, 0, 0, 0),
+                          (3, 're:Invent 2022', 're:Invent 2022', '/images/riv-22.jpeg', 1100, 700, 0, 0, 0),
+                          (4, 're:Invent 2023', 're:Invent 2023', '/images/riv-23.jpeg', 1300, 850, 0, 0, 0),
+                          (5, 're:Invent 2024', 're:Invent 2024', '/images/riv-24.jpeg', 1250, 750, 0, 0, 0),
+                          (6, 're:Invent 2025', 're:Invent 2025', '/images/riv-25.jpeg', 1150, 800, 0, 0, 0)
+                      ]
+                      
+                      for image_data in initial_images:
+                          # Use INSERT ... ON DUPLICATE KEY UPDATE to ensure counters are reset to zero
+                          cursor.execute("""
+                              INSERT INTO images 
+                              (id, title, description, image_url, width, height, likes_count, shares_count, views_count) 
+                              VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                              ON DUPLICATE KEY UPDATE
+                              likes_count = 0,
+                              shares_count = 0,
+                              views_count = 0,
+                              updated_at = CURRENT_TIMESTAMP
+                          """, image_data)
+                      
+                      # Also clear any existing interaction records to ensure clean state
+                      cursor.execute("DELETE FROM image_interactions")
+                      
+                      print("Database tables created and initialized successfully")
+                      db_initialized = True
+                      return True
+                      
+              except Exception as e:
+                  print(f"Database initialization error: {e}")
+                  return False
+          
+          def get_images_from_db():
+              """Get images with current metrics from database"""
+              try:
+                  conn = get_db_connection()
+                  
+                  with conn.cursor() as cursor:
+                      cursor.execute(f"USE {os.environ['DB_NAME']}")
+                      cursor.execute("""
+                          SELECT id, title, description, image_url, width, height, 
+                                 likes_count, shares_count, views_count, created_at
+                          FROM images 
+                          ORDER BY id
+                      """)
+                      
+                      images = []
+                      for row in cursor.fetchall():
+                          images.append({
+                              'id': row['id'],
+                              'title': row['title'],
+                              'description': row['description'],
+                              'image_url': row['image_url'],
+                              'width': row['width'],
+                              'height': row['height'],
+                              'likes_count': row['likes_count'],
+                              'shares_count': row['shares_count'],
+                              'views_count': row['views_count'],
+                              'created_at': row['created_at'].isoformat() if row['created_at'] else None
+                          })
+                      
+                      return images
+                      
+              except Exception as e:
+                  print(f"Error getting images from database: {e}")
+                  raise Exception(f"Failed to retrieve images from database: {e}")
+          
+          def get_correspondence_history(ticket_id):
+              """Get correspondence history for a ticket"""
+              try:
+                  conn = get_db_connection()
+                  
+                  with conn.cursor() as cursor:
+                      cursor.execute(f"USE {os.environ['DB_NAME']}")
+                      
+                      cursor.execute("""
+                          SELECT correspondence_id, author, message, message_type, 
+                                 module_name, module_progress_before, module_progress_after,
+                                 module_completed, created_at
+                          FROM sev1_correspondence_history 
+                          WHERE ticket_id = %s
+                          ORDER BY correspondence_id ASC
+                      """, (ticket_id,))
+                      
+                      correspondence = []
+                      for row in cursor.fetchall():
+                          correspondence.append({
+                              'id': row['correspondence_id'],
+                              'author': row['author'],
+                              'message': row['message'],
+                              'type': row['message_type'],
+                              'module_name': row['module_name'],
+                              'module_progress_before': row['module_progress_before'],
+                              'module_progress_after': row['module_progress_after'],
+                              'module_completed': row['module_completed'],
+                              'timestamp': row['created_at'].isoformat() if row['created_at'] else None
+                          })
+                      
+                      return correspondence
+                      
+              except Exception as e:
+                  print(f"Error getting correspondence history: {e}")
+                  return []
+          
+          def get_workshop_progress():
+              """Get current workshop module progress"""
+              try:
+                  conn = get_db_connection()
+                  
+                  with conn.cursor() as cursor:
+                      cursor.execute(f"USE {os.environ['DB_NAME']}")
+                      
+                      cursor.execute("""
+                          SELECT module_name, display_name, current_progress, max_progress, is_completed
+                          FROM workshop_modules 
+                          ORDER BY id
+                      """)
+                      
+                      modules = []
+                      for row in cursor.fetchall():
+                          modules.append({
+                              'module_name': row['module_name'],
+                              'display_name': row['display_name'],
+                              'current_progress': row['current_progress'],
+                              'max_progress': row['max_progress'],
+                              'is_completed': row['is_completed']
+                          })
+                      
+                      return modules
+                      
+              except Exception as e:
+                  print(f"Error getting workshop progress: {e}")
+                  return []
+
+          def store_correspondence_and_update_progress(ticket_id, message, author, session_id=None):
+              """Store correspondence and update workshop module progress"""
+              try:
+                  conn = get_db_connection()
+                  
+                  with conn.cursor() as cursor:
+                      cursor.execute(f"USE {os.environ['DB_NAME']}")
+                      
+                      # Get the next correspondence ID for this ticket
+                      cursor.execute("""
+                          SELECT COALESCE(MAX(correspondence_id), 0) + 1 as next_id
+                          FROM sev1_correspondence_history 
+                          WHERE ticket_id = %s
+                      """, (ticket_id,))
+                      
+                      next_correspondence_id = cursor.fetchone()['next_id']
+                      
+                      # Get current workshop module progress
+                      cursor.execute("""
+                          SELECT module_name, display_name, current_progress, is_completed
+                          FROM workshop_modules 
+                          ORDER BY id
+                      """)
+                      
+                      modules = cursor.fetchall()
+                      current_module = None
+                      current_module_index = 0
+                      
+                      # Find the first incomplete module
+                      for i, module in enumerate(modules):
+                          if not module['is_completed']:
+                              current_module = module
+                              current_module_index = i
+                              break
+                      
+                      module_updated = False
+                      module_completed = False
+                      
+                      if current_module:
+                          # Set progress to 100% for the current module (complete it)
+                          old_progress = current_module['current_progress']
+                          new_progress = 100
+                          module_completed = True
+                          
+                          # Update module progress
+                          cursor.execute("""
+                              UPDATE workshop_modules 
+                              SET current_progress = %s, 
+                                  is_completed = %s,
+                                  completion_date = %s,
+                                  updated_at = CURRENT_TIMESTAMP
+                              WHERE module_name = %s
+                          """, (new_progress, module_completed, 
+                                datetime.now() if module_completed else None,
+                                current_module['module_name']))
+                          
+                          # Store correspondence with module tracking
+                          cursor.execute("""
+                              INSERT INTO sev1_correspondence_history 
+                              (ticket_id, correspondence_id, author, message, message_type, 
+                               module_name, module_progress_before, module_progress_after, 
+                               module_completed, session_id, created_at)
+                              VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                          """, (ticket_id, next_correspondence_id, author, message, 'user',
+                                current_module['module_name'], old_progress, new_progress,
+                                module_completed, session_id))
+                          
+                          module_updated = True
+                          
+                          print(f"Updated module {current_module['module_name']} from {old_progress}% to {new_progress}%")
+                          if module_completed:
+                              print(f"Module {current_module['module_name']} completed!")
+                      else:
+                          # All modules completed, just store correspondence
+                          cursor.execute("""
+                              INSERT INTO sev1_correspondence_history 
+                              (ticket_id, correspondence_id, author, message, message_type, 
+                               session_id, created_at)
+                              VALUES (%s, %s, %s, %s, %s, %s, NOW())
+                          """, (ticket_id, next_correspondence_id, author, message, 'user', session_id))
+                      
+                      # Get updated module progress for response
+                      cursor.execute("""
+                          SELECT module_name, display_name, current_progress, max_progress, is_completed
+                          FROM workshop_modules 
+                          ORDER BY id
+                      """)
+                      
+                      updated_modules = cursor.fetchall()
+                      
+                      return {
+                          'success': True,
+                          'correspondence_id': next_correspondence_id,
+                          'moduleUpdated': module_updated,
+                          'moduleCompleted': module_completed,
+                          'moduleProgress': updated_modules
+                      }
+                      
+              except Exception as e:
+                  print(f"Error storing correspondence and updating progress: {e}")
+                  raise Exception(f"Failed to store correspondence: {e}")
+          
+          def lambda_handler(event, context):
+              try:
+                  # Initialize database on first run
+                  init_database()
+                  
+                  # Get the path from ALB event
+                  path = event.get('path', '/')
+                  method = event.get('httpMethod', 'GET')
+                  
+                  print(f"HTML Renderer Request: {method} {path}")
+                  
+                  if path == '/' or path == '/index.html':
+                      # Serve the main HTML page with embedded data
+                      html_content = '''<!DOCTYPE html>
+          <html lang="en">
+          <head>
+              <meta charset="UTF-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1.0">
+              <title>ACME.com - Image Gallery</title>
+              <style>
+                  * { margin: 0; padding: 0; box-sizing: border-box; }
+                  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #ffffff; color: #333; line-height: 1.6; }
+                  .header { background: #ffffff; box-shadow: 0 2px 8px rgba(0,0,0,0.1); position: fixed; top: 0; left: 0; right: 0; z-index: 1000; padding: 12px 20px; }
+                  .header-content { max-width: 1200px; margin: 0 auto; display: flex; align-items: center; justify-content: space-between; }
+                  .logo { font-size: 24px; font-weight: bold; color: #e60023; text-decoration: none; }
+                  .nav-links { display: flex; gap: 20px; margin: 0 20px; }
+                  .nav-link { padding: 8px 16px; text-decoration: none; color: #666; border-radius: 20px; transition: all 0.3s ease; font-weight: 500; cursor: pointer; }
+                  .nav-link:hover, .nav-link.active { background-color: #e60023; color: white; }
+                  .search-bar { flex: 1; max-width: 400px; position: relative; }
+                  .search-input { width: 100%; padding: 12px 20px; border: none; border-radius: 24px; background-color: #f1f1f1; font-size: 16px; outline: none; transition: all 0.3s ease; }
+                  .search-input:focus { background-color: #ffffff; box-shadow: 0 0 0 3px rgba(230, 0, 35, 0.1); }
+                  .main-container { margin-top: 80px; max-width: 1400px; margin-left: auto; margin-right: auto; padding: 20px; }
+                  .page-title { font-size: 28px; font-weight: 600; margin-bottom: 20px; color: #333; text-align: center; }
+                  .horizontal-grid { 
+                    display: grid; 
+                    grid-template-columns: repeat(auto-fit, minmax(350px, 1fr)); 
+                    gap: 20px; 
+                    padding: 0 10px;
+                    justify-items: center;
+                  }
+                  @media (max-width: 1200px) { 
+                    .horizontal-grid { 
+                      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); 
+                      gap: 18px; 
+                    } 
+                  }
+                  @media (max-width: 768px) { 
+                    .horizontal-grid { 
+                      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); 
+                      gap: 16px; 
+                    } 
+                  }
+                  @media (max-width: 480px) { 
+                    .horizontal-grid { 
+                      grid-template-columns: 1fr; 
+                      gap: 12px; 
+                    } 
+                  }
+                  .image-card { 
+                    background: #ffffff; 
+                    border-radius: 16px; 
+                    overflow: hidden; 
+                    box-shadow: 0 2px 8px rgba(0,0,0,0.1); 
+                    transition: all 0.3s ease; 
+                    cursor: pointer; 
+                    position: relative; 
+                    width: 100%;
+                    max-width: 400px;
+                  }
+                  .image-card:hover { transform: translateY(-2px); box-shadow: 0 8px 25px rgba(0,0,0,0.15); }
+                  .image-thumbnail { position: relative; overflow: hidden; }
+                  .image-card img { 
+                    width: 100%; 
+                    height: 240px; 
+                    object-fit: cover; 
+                    display: block; 
+                    transition: transform 0.3s ease; 
+                    background-color: #f8f9fa; 
+                  }
+                  .image-card:hover img { transform: scale(1.02); }
+                  .image-overlay { position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.7) 100%); opacity: 0; transition: opacity 0.3s ease; display: flex; align-items: flex-end; padding: 16px; }
+                  .image-card:hover .image-overlay { opacity: 1; }
+                  .image-actions { display: flex; gap: 8px; }
+                  .action-btn { background: rgba(255,255,255,0.9); border: none; border-radius: 20px; padding: 8px 12px; font-size: 12px; cursor: pointer; transition: all 0.3s ease; display: flex; align-items: center; gap: 4px; }
+                  .action-btn:hover { background: white; transform: scale(1.05); }
+                  .image-info { padding: 16px; }
+                  .image-title { font-size: 16px; font-weight: 600; margin-bottom: 8px; color: #333; line-height: 1.3; }
+                  .image-description { font-size: 14px; color: #666; line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+                  .image-stats { display: flex; align-items: center; gap: 12px; margin-top: 12px; font-size: 12px; color: #999; }
+                  .stat-item { display: flex; align-items: center; gap: 4px; }
+                  .loading { text-align: center; padding: 40px; font-size: 18px; color: #666; }
+                  .error { text-align: center; padding: 40px; color: #e60023; font-size: 18px; }
+                  
+                  /* Support Tickets Styles */
+                  .support-container { max-width: 1200px; margin: 0 auto; }
+                  .support-layout { display: grid; grid-template-columns: 1fr 300px; gap: 24px; }
+                  @media (max-width: 768px) { .support-layout { grid-template-columns: 1fr; } }
+                  .support-main { display: flex; flex-direction: column; gap: 24px; }
+                  .support-sidebar { display: flex; flex-direction: column; gap: 24px; }
+                  
+                  .ticket-form { background: white; border-radius: 16px; padding: 24px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+                  .form-group { margin-bottom: 20px; }
+                  .form-label { display: block; margin-bottom: 8px; font-weight: 600; color: #333; }
+                  .form-input, .form-textarea, .form-select { width: 100%; padding: 12px 16px; border: 2px solid #f1f1f1; border-radius: 8px; font-size: 16px; transition: border-color 0.3s ease; }
+                  .form-input:focus, .form-textarea:focus, .form-select:focus { outline: none; border-color: #e60023; }
+                  .form-textarea { resize: vertical; min-height: 120px; }
+                  .submit-btn { background: #e60023; color: white; border: none; padding: 12px 24px; border-radius: 8px; font-size: 16px; font-weight: 600; cursor: pointer; transition: background-color 0.3s ease; }
+                  .submit-btn:hover { background: #cc001e; }
+                  
+                  .tickets-list { display: grid; gap: 16px; }
+                  .ticket-item { background: white; border-radius: 12px; padding: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); transition: all 0.3s ease; cursor: pointer; }
+                  .ticket-item:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
+                  .ticket-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+                  .ticket-id { font-weight: 600; color: #e60023; }
+                  .ticket-status { padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 600; }
+                  .status-open { background: #fff3cd; color: #856404; }
+                  .status-closed { background: #d4edda; color: #155724; }
+                  .status-sev1 { background: #f8d7da; color: #721c24; }
+                  .ticket-expand-icon { font-size: 14px; color: #666; transition: transform 0.3s ease; }
+                  .ticket-expand-icon.expanded { transform: rotate(180deg); }
+                  .ticket-subject { font-size: 18px; font-weight: 600; margin-bottom: 8px; }
+                  .ticket-description { color: #666; margin-bottom: 12px; }
+                  .ticket-meta { font-size: 12px; color: #999; }
+                  .ticket-resources { background: #f8f9fa; padding: 12px; border-radius: 8px; margin-top: 12px; }
+                  .ticket-resources h4 { margin: 0 0 8px 0; font-size: 14px; color: #333; }
+                  .resource-list { list-style: none; padding: 0; margin: 0; }
+                  .resource-list li { padding: 4px 0; font-size: 12px; color: #666; font-family: monospace; }
+                  
+                  /* Correspondence Styles */
+                  .ticket-correspondence { margin-top: 16px; border-top: 1px solid #e1e5e9; padding-top: 16px; }
+                  .ticket-correspondence h4 { margin: 0 0 12px 0; font-size: 16px; color: #333; }
+                  .correspondence-list { max-height: 300px; overflow-y: auto; margin-bottom: 16px; }
+                  .correspondence-item { background: #f8f9fa; border-radius: 8px; padding: 12px; margin-bottom: 8px; }
+                  .correspondence-item.system { background: #e3f2fd; }
+                  .correspondence-item.user { background: #f3e5f5; }
+                  .correspondence-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+                  .correspondence-header strong { color: #333; font-size: 14px; }
+                  .correspondence-time { font-size: 12px; color: #666; }
+                  .correspondence-message { color: #555; font-size: 14px; line-height: 1.4; }
+                  .correspondence-form { display: flex; flex-direction: column; gap: 8px; }
+                  .correspondence-form textarea { width: 100%; padding: 12px; border: 2px solid #e1e5e9; border-radius: 8px; font-size: 14px; resize: vertical; }
+                  .correspondence-form textarea:focus { outline: none; border-color: #e60023; }
+                  .correspondence-submit { background: #e60023; color: white; border: none; padding: 10px 16px; border-radius: 6px; font-size: 14px; font-weight: 600; cursor: pointer; align-self: flex-start; }
+                  .correspondence-submit:hover { background: #cc001e; }
+                  
+                  /* Progress Bar Styles */
+                  .progress-widget { background: white; border-radius: 16px; padding: 24px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+                  .progress-widget h3 { margin: 0 0 20px 0; font-size: 18px; color: #333; }
+                  .progress-modules { display: flex; flex-direction: column; gap: 16px; }
+                  .progress-module { display: flex; align-items: center; gap: 12px; }
+                  .progress-bar { flex: 1; height: 8px; background: #f1f1f1; border-radius: 4px; overflow: hidden; }
+                  .progress-fill { height: 100%; background: linear-gradient(90deg, #e60023, #ff4757); transition: width 0.3s ease; }
+                  .progress-label { font-size: 14px; font-weight: 500; color: #333; min-width: 140px; }
+                  .progress-value { font-size: 12px; color: #666; min-width: 40px; text-align: right; }
+                  
+                  /* Reporting Table Styles */
+                  .reporting-widget { background: white; border-radius: 16px; padding: 24px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+                  .reporting-widget h3 { margin: 0 0 20px 0; font-size: 18px; color: #333; }
+                  .reporting-table { width: 100%; border-collapse: collapse; }
+                  .reporting-table th, .reporting-table td { padding: 12px 8px; text-align: left; border-bottom: 1px solid #f1f1f1; }
+                  .reporting-table th { background: #f8f9fa; font-weight: 600; color: #333; font-size: 14px; }
+                  .reporting-table td { font-size: 13px; color: #666; }
+                  .reporting-table tr:hover { background: #f8f9fa; }
+                  .popularity-score { font-weight: 600; }
+                  .popularity-high { color: #28a745; }
+                  .popularity-medium { color: #ffc107; }
+                  .popularity-low { color: #dc3545; }
+                  
+                  .hidden { display: none !important; }
+              </style>
+          </head>
+          <body>
+              <header class="header">
+                  <div class="header-content">
+                      <a href="#" class="logo">ACME.com</a>
+                      <div class="nav-links">
+                          <span class="nav-link active" data-tab="gallery">Gallery</span>
+                          <span class="nav-link" data-tab="support">Support Tickets</span>
+                      </div>
+                      <div class="search-bar">
+                          <input type="text" class="search-input" placeholder="Search for images..." id="searchInput">
+                      </div>
+                      <div style="width: 100px;"></div>
+                  </div>
+              </header>
+
+              <div class="main-container">
+                  <!-- Gallery Tab -->
+                  <div id="galleryTab" class="tab-content">
+                      <h1 class="page-title">Image Gallery</h1>
+                      
+                      <div id="loadingState" class="loading">
+                          Loading amazing images...
+                      </div>
+                      
+                      <div id="errorState" class="error" style="display: none;">
+                          Failed to load images. Please try again later.
+                      </div>
+                      
+                      <div id="imageGrid" class="horizontal-grid" style="display: none;">
+                          <!-- Images will be loaded here -->
+                      </div>
+                  </div>
+
+                  <!-- Support Tickets Tab -->
+                  <div id="supportTab" class="tab-content hidden">
+                      <div class="support-container">
+                          <h1 class="page-title">Support Tickets</h1>
+                          
+                          <div class="support-layout">
+                              <div class="support-main">
+                                  <!-- Ticket creation form removed as per requirements -->
+
+                                  <div class="tickets-list" id="ticketsList">
+                                      <!-- Sample tickets will be loaded here -->
+                                  </div>
+
+                                  <div class="reporting-widget">
+                                      <h3>Image Analytics Report</h3>
+                                      <table class="reporting-table">
+                                          <thead>
+                                              <tr>
+                                                  <th>Display Name</th>
+                                                  <th>Likes</th>
+                                                  <th>Shares</th>
+                                                  <th>Popularity Score</th>
+                                              </tr>
+                                          </thead>
+                                          <tbody id="reportingTableBody">
+                                              <!-- Data will be populated by reporting server -->
+                                          </tbody>
+                                      </table>
+                                  </div>
+                              </div>
+
+                              <div class="support-sidebar">
+                                  <div class="progress-widget">
+                                      <h3>Workshop Status</h3>
+                                      <div class="progress-modules" id="workshopProgress">
+                          <div class="progress-module">
+                              <div class="progress-label">AgentCore Runtime</div>
+                              <div class="progress-bar">
+                                  <div class="progress-fill" style="width: 0%"></div>
+                              </div>
+                              <div class="progress-value">0%</div>
+                          </div>
+                          <div class="progress-module">
+                              <div class="progress-label">AgentCore Memory</div>
+                              <div class="progress-bar">
+                                  <div class="progress-fill" style="width: 0%"></div>
+                              </div>
+                              <div class="progress-value">0%</div>
+                          </div>
+                          <div class="progress-module">
+                              <div class="progress-label">A2A</div>
+                              <div class="progress-bar">
+                                  <div class="progress-fill" style="width: 0%"></div>
+                              </div>
+                              <div class="progress-value">0%</div>
+                          </div>
+                          <div class="progress-module">
+                              <div class="progress-label">CloudWatch Investigations</div>
+                              <div class="progress-bar">
+                                  <div class="progress-fill" style="width: 0%"></div>
+                              </div>
+                              <div class="progress-value">0%</div>
+                          </div>
+                      </div>
+                  </div>
+                              </div>
+                          </div>
+                      </div>
+                  </div>
+              </div>
+
+              <script>
+                  const API_BASE_URL = window.location.origin;
+                  let currentImages = [];
+                  let currentTab = 'gallery';
+
+                  // Tab switching functionality
+                  document.querySelectorAll('[data-tab]').forEach(tab => {
+                      tab.addEventListener('click', (e) => {
+                          const tabName = e.target.getAttribute('data-tab');
+                          switchTab(tabName);
+                      });
+                  });
+
+                  function switchTab(tabName) {
+                      // Update active nav link
+                      document.querySelectorAll('.nav-link').forEach(link => {
+                          link.classList.remove('active');
+                      });
+                      document.querySelector(`[data-tab="${tabName}"]`).classList.add('active');
+
+                      // Show/hide tab content
+                      document.querySelectorAll('.tab-content').forEach(content => {
+                          content.classList.add('hidden');
+                      });
+                      document.getElementById(`${tabName}Tab`).classList.remove('hidden');
+
+                      currentTab = tabName;
+
+                      // Load content based on tab
+                      if (tabName === 'gallery') {
+                          loadImages();
+                      } else if (tabName === 'support') {
+                          loadSupportTickets();
+                      }
+                  }
+
+                  async function loadImages() {
+                      if (currentTab !== 'gallery') return;
+                      
+                      try {
+                          showLoading();
+                          const response = await fetch(`${API_BASE_URL}/api/images`);
+                          if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                          const images = await response.json();
+                          currentImages = images;
+                          displayImages(images);
+                      } catch (error) {
+                          console.error('Error loading images:', error);
+                          showError();
+                      }
+                  }
+
+                  function displayImages(images) {
+                      const grid = document.getElementById('imageGrid');
+                      grid.innerHTML = '';
+                      images.forEach(image => {
+                          const imageCard = createImageCard(image);
+                          grid.appendChild(imageCard);
+                      });
+                      hideLoading();
+                      grid.style.display = 'block';
+                  }
+
+                  function createImageCard(image) {
+                      const card = document.createElement('div');
+                      card.className = 'image-card';
+                      card.setAttribute('data-image-id', image.id);
+                      
+                      const thumbnail = document.createElement('div');
+                      thumbnail.className = 'image-thumbnail';
+                      
+                      const img = document.createElement('img');
+                      img.src = image.image_url || 'https://via.placeholder.com/300x400?text=Image+Not+Available';
+                      img.alt = image.title;
+                      img.loading = 'lazy';
+                      img.onerror = function() { this.src = 'https://via.placeholder.com/300x400?text=Image+Not+Available'; };
+                      
+                      const overlay = document.createElement('div');
+                      overlay.className = 'image-overlay';
+                      
+                      const actions = document.createElement('div');
+                      actions.className = 'image-actions';
+                      
+                      const likeBtn = document.createElement('button');
+                      likeBtn.className = 'action-btn like-btn';
+                      likeBtn.innerHTML = `♥ Like (${image.likes_count || 0})`;
+                      likeBtn.onclick = (e) => {
+                          e.stopPropagation();
+                          trackInteraction(image.id, 'like', likeBtn);
+                      };
+                      
+                      const shareBtn = document.createElement('button');
+                      shareBtn.className = 'action-btn share-btn';
+                      shareBtn.innerHTML = `↗ Share (${image.shares_count || 0})`;
+                      shareBtn.onclick = (e) => {
+                          e.stopPropagation();
+                          trackInteraction(image.id, 'share', shareBtn);
+                      };
+                      
+                      actions.appendChild(likeBtn);
+                      actions.appendChild(shareBtn);
+                      overlay.appendChild(actions);
+                      
+                      thumbnail.appendChild(img);
+                      thumbnail.appendChild(overlay);
+                      
+                      const info = document.createElement('div');
+                      info.className = 'image-info';
+                      
+                      const title = document.createElement('div');
+                      title.className = 'image-title';
+                      title.textContent = image.title;
+                      
+                      const description = document.createElement('div');
+                      description.className = 'image-description';
+                      description.textContent = image.description || 'No description available';
+                      
+                      const stats = document.createElement('div');
+                      stats.className = 'image-stats';
+                      
+                      const likesCount = document.createElement('div');
+                      likesCount.className = 'stat-item likes-count';
+                      likesCount.innerHTML = `♥ ${image.likes_count || 0} likes`;
+                      
+                      const sharesCount = document.createElement('div');
+                      sharesCount.className = 'stat-item shares-count';
+                      sharesCount.innerHTML = `↗ ${image.shares_count || 0} shares`;
+                      
+                      const viewsCount = document.createElement('div');
+                      viewsCount.className = 'stat-item views-count';
+                      viewsCount.innerHTML = `👁 ${image.views_count || 0} views`;
+                      
+                      const dimensions = document.createElement('div');
+                      dimensions.className = 'stat-item';
+                      dimensions.innerHTML = `📐 ${image.width || '?'} × ${image.height || '?'}`;
+                      
+                      const date = document.createElement('div');
+                      date.className = 'stat-item';
+                      const createdDate = new Date(image.created_at);
+                      date.innerHTML = `📅 ${createdDate.toLocaleDateString()}`;
+                      
+                      stats.appendChild(likesCount);
+                      stats.appendChild(sharesCount);
+                      stats.appendChild(viewsCount);
+                      stats.appendChild(dimensions);
+                      stats.appendChild(date);
+                      info.appendChild(title);
+                      info.appendChild(description);
+                      info.appendChild(stats);
+                      
+                      card.appendChild(thumbnail);
+                      card.appendChild(info);
+                      return card;
+                  }
+
+                  async function trackInteraction(imageId, action, buttonElement) {
+                      try {
+                          // Disable button temporarily to prevent double-clicks
+                          buttonElement.disabled = true;
+                          const originalText = buttonElement.innerHTML;
+                          buttonElement.innerHTML = `${action === 'like' ? '♥' : '↗'} ${action === 'like' ? 'Liking...' : 'Sharing...'}`;
+                          
+                          const response = await fetch(`${API_BASE_URL}/api/track/${action}`, {
+                              method: 'POST',
+                              headers: {
+                                  'Content-Type': 'application/json',
+                              },
+                              body: JSON.stringify({
+                                  imageId: imageId,
+                                  sessionId: 'user-session-' + Date.now()
+                              })
+                          });
+                          
+                          if (response.ok) {
+                              console.log(`${action} tracked successfully for image ${imageId}`);
+                              
+                              // Refresh the image data to get updated counts
+                              await refreshImageCounts(imageId);
+                              
+                              // Show success feedback
+                              buttonElement.innerHTML = `${action === 'like' ? '♥' : '↗'} ${action === 'like' ? 'Liked!' : 'Shared!'}`;
+                              setTimeout(() => {
+                                  buttonElement.disabled = false;
+                              }, 1000);
+                          } else {
+                              throw new Error(`Failed to track ${action}`);
+                          }
+                      } catch (error) {
+                          console.error(`Error tracking ${action}:`, error);
+                          buttonElement.innerHTML = originalText;
+                          buttonElement.disabled = false;
+                      }
+                  }
+
+                  async function refreshImageCounts(imageId) {
+                      try {
+                          const response = await fetch(`${API_BASE_URL}/api/images`);
+                          if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                          const images = await response.json();
+                          
+                          const updatedImage = images.find(img => img.id === imageId);
+                          if (updatedImage) {
+                              updateImageCardCounts(imageId, updatedImage);
+                          }
+                      } catch (error) {
+                          console.error('Error refreshing image counts:', error);
+                      }
+                  }
+
+                  function updateImageCardCounts(imageId, imageData) {
+                      const card = document.querySelector(`[data-image-id="${imageId}"]`);
+                      if (!card) return;
+                      
+                      // Update button counts in overlay
+                      const likeBtn = card.querySelector('.like-btn');
+                      const shareBtn = card.querySelector('.share-btn');
+                      
+                      if (likeBtn && !likeBtn.disabled) {
+                          likeBtn.innerHTML = `♥ Like (${imageData.likes_count || 0})`;
+                      }
+                      if (shareBtn && !shareBtn.disabled) {
+                          shareBtn.innerHTML = `↗ Share (${imageData.shares_count || 0})`;
+                      }
+                      
+                      // Update stats in info section
+                      const likesCount = card.querySelector('.likes-count');
+                      const sharesCount = card.querySelector('.shares-count');
+                      const viewsCount = card.querySelector('.views-count');
+                      
+                      if (likesCount) {
+                          likesCount.innerHTML = `♥ ${imageData.likes_count || 0} likes`;
+                      }
+                      if (sharesCount) {
+                          sharesCount.innerHTML = `↗ ${imageData.shares_count || 0} shares`;
+                      }
+                      if (viewsCount) {
+                          viewsCount.innerHTML = `👁 ${imageData.views_count || 0} views`;
+                      }
+                  }
+
+                  async function loadSupportTickets() {
+                      const ticketsList = document.getElementById('ticketsList');
+                      
+                      // Single SEV1 ticket with current date and correspondence functionality
+                      const currentDate = new Date().toISOString();
+                      const ticketId = 'TKT-SEV1-001';
+                      
+                      // Load correspondence history from database
+                      let correspondenceHistory = [];
+                      try {
+                          const response = await fetch(`${API_BASE_URL}/api/correspondence?ticketId=${ticketId}`);
+                          if (response.ok) {
+                              correspondenceHistory = await response.json();
+                              console.log('Loaded correspondence history:', correspondenceHistory);
+                          } else {
+                              console.warn('Failed to load correspondence history, using default');
+                              // Default system message if no correspondence exists
+                              correspondenceHistory = [
+                                  {
+                                      id: 1,
+                                      author: 'System',
+                                      message: 'Ticket created automatically due to platform monitoring alerts.',
+                                      timestamp: currentDate,
+                                      type: 'system'
+                                  }
+                              ];
+                          }
+                      } catch (error) {
+                          console.error('Error loading correspondence history:', error);
+                          // Default system message on error
+                          correspondenceHistory = [
+                              {
+                                  id: 1,
+                                  author: 'System',
+                                  message: 'Ticket created automatically due to platform monitoring alerts.',
+                                  timestamp: currentDate,
+                                  type: 'system'
+                              }
+                          ];
+                      }
+                      
+                      const sampleTickets = [
+                          {
+                              id: ticketId,
+                              subject: 'ACME Image platform is down',
+                              description: 'Complete platform outage affecting all image services. Users unable to access gallery or upload images.',
+                              priority: 'sev1',
+                              status: 'open',
+                              created: currentDate,
+                              resources: [
+                                  'ALB DNS: sample-app-image-sharing-alb-123456789.us-east-1.elb.amazonaws.com',
+                                  'S3 Bucket: sample-app-123456789-image-stack-name',
+                                  'RDS Endpoint: sample-app-image-metadata-db.cluster-xyz.us-east-1.rds.amazonaws.com',
+                                  'Reporting Server: i-0123456789abcdef0',
+                                  'Transit Gateway: tgw-0123456789abcdef0',
+                                  'Lambda Functions: sample-app-html-renderer, sample-app-image-processor, sample-app-user-interactions'
+                              ],
+                              correspondence: correspondenceHistory
+                          }
+                      ];
+
+                      ticketsList.innerHTML = '';
+                      sampleTickets.forEach(ticket => {
+                          const ticketElement = createTicketElement(ticket);
+                          ticketsList.appendChild(ticketElement);
+                      });
+
+                      // Load workshop progress from database
+                      await loadWorkshopProgress();
+                      
+                      // Load reporting table data
+                      loadReportingData();
+                  }
+
+                  function createTicketElement(ticket) {
+                      const ticketDiv = document.createElement('div');
+                      ticketDiv.className = 'ticket-item';
+                      ticketDiv.style.cursor = 'pointer';
+                      
+                      const createdDate = new Date(ticket.created).toLocaleDateString();
+                      
+                      let resourcesHtml = '';
+                      if (ticket.resources && ticket.resources.length > 0) {
+                          resourcesHtml = `
+                              <div class="ticket-resources">
+                                  <h4>Affected Resources:</h4>
+                                  <ul class="resource-list">
+                                      ${ticket.resources.map(resource => `<li>${resource}</li>`).join('')}
+                                  </ul>
+                              </div>
+                          `;
+                      }
+                      
+                      // Create correspondence HTML
+                      let correspondenceHtml = '';
+                      if (ticket.correspondence && ticket.correspondence.length > 0) {
+                          correspondenceHtml = `
+                              <div class="ticket-correspondence" id="correspondence-${ticket.id}" style="display: block;">
+                                  <h4>Correspondence:</h4>
+                                  <div class="correspondence-list" id="correspondence-list-${ticket.id}">
+                                      ${ticket.correspondence.map(msg => `
+                                          <div class="correspondence-item ${msg.type}">
+                                              <div class="correspondence-header">
+                                                  <strong>${msg.author}</strong>
+                                                  <span class="correspondence-time">${new Date(msg.timestamp).toLocaleString()}</span>
+                                              </div>
+                                              <div class="correspondence-message">${msg.message}</div>
+                                          </div>
+                                      `).join('')}
+                                  </div>
+                                  <div class="correspondence-form">
+                                      <textarea id="correspondence-input-${ticket.id}" placeholder="Add correspondence..." rows="3"></textarea>
+                                      <button onclick="postCorrespondence(event, '${ticket.id}')" class="correspondence-submit">Post Correspondence</button>
+                                  </div>
+                              </div>
+                          `;
+                      }
+                      
+                      ticketDiv.innerHTML = `
+                          <div class="ticket-header">
+                              <span class="ticket-id">${ticket.id}</span>
+                              <span class="ticket-status status-${ticket.priority === 'sev1' ? 'sev1' : ticket.status}">${ticket.status.toUpperCase()}</span>
+                              <span class="ticket-expand-icon" id="expand-icon-${ticket.id}">▼</span>
+                          </div>
+                          <div class="ticket-subject">${ticket.subject}</div>
+                          <div class="ticket-description">${ticket.description}</div>
+                          <div class="ticket-meta">
+                              Priority: ${ticket.priority.toUpperCase()} | Created: ${createdDate} | Click to expand
+                          </div>
+                          ${resourcesHtml}
+                          ${correspondenceHtml}
+                      `;
+                      
+                      // Add click handler to expand/collapse ticket
+                      ticketDiv.addEventListener('click', (e) => {
+                          // Don't expand if clicking on form elements
+                          if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'BUTTON') {
+                              return;
+                          }
+                          toggleTicketExpansion(ticket.id);
+                      });
+                      
+                      return ticketDiv;
+                  }
+
+                  function loadReportingData() {
+                      const reportingTableBody = document.getElementById('reportingTableBody');
+                      
+                      // Sample reporting data that would be populated by reporting server
+                      const reportingData = [
+                          { displayName: 're:Invent 2020', likes: 45, shares: 12, popularityScore: 8.7 },
+                          { displayName: 're:Invent 2021', likes: 67, shares: 23, popularityScore: 9.2 },
+                          { displayName: 're:Invent 2022', likes: 34, shares: 8, popularityScore: 7.1 },
+                          { displayName: 're:Invent 2023', likes: 89, shares: 31, popularityScore: 9.8 },
+                          { displayName: 're:Invent 2024', likes: 56, shares: 19, popularityScore: 8.4 },
+                          { displayName: 're:Invent 2025', likes: 78, shares: 25, popularityScore: 9.1 }
+                      ];
+
+                      reportingTableBody.innerHTML = '';
+                      reportingData.forEach(row => {
+                          const tr = document.createElement('tr');
+                          
+                          let popularityClass = 'popularity-medium';
+                          if (row.popularityScore >= 9.0) popularityClass = 'popularity-high';
+                          else if (row.popularityScore < 8.0) popularityClass = 'popularity-low';
+                          
+                          tr.innerHTML = `
+                              <td>${row.displayName}</td>
+                              <td>${row.likes}</td>
+                              <td>${row.shares}</td>
+                              <td><span class="popularity-score ${popularityClass}">${row.popularityScore}</span></td>
+                          `;
+                          
+                          reportingTableBody.appendChild(tr);
+                      });
+                  }
+
+                  // Ticket form handling removed since form was removed from HTML
+
+                  function showLoading() {
+                      document.getElementById('loadingState').style.display = 'block';
+                      document.getElementById('errorState').style.display = 'none';
+                      document.getElementById('imageGrid').style.display = 'none';
+                  }
+
+                  function showError() {
+                      document.getElementById('loadingState').style.display = 'none';
+                      document.getElementById('errorState').style.display = 'block';
+                      document.getElementById('imageGrid').style.display = 'none';
+                  }
+
+                  function hideLoading() {
+                      document.getElementById('loadingState').style.display = 'none';
+                      document.getElementById('errorState').style.display = 'none';
+                  }
+
+                  // Global variables for workshop progress tracking
+                  let workshopModules = ['AgentCore Runtime', 'AgentCore Memory', 'A2A', 'CloudWatch Investigations'];
+                  let moduleProgress = [0, 0, 0, 0]; // Start all at 0%
+                  let currentModuleIndex = 0;
+
+                  // Function to toggle ticket expansion
+                  function toggleTicketExpansion(ticketId) {
+                      const correspondenceDiv = document.getElementById(`correspondence-${ticketId}`);
+                      const expandIcon = document.getElementById(`expand-icon-${ticketId}`);
+                      
+                      if (correspondenceDiv.style.display === 'none') {
+                          correspondenceDiv.style.display = 'block';
+                          expandIcon.classList.add('expanded');
+                          expandIcon.textContent = '▲';
+                      } else {
+                          correspondenceDiv.style.display = 'none';
+                          expandIcon.classList.remove('expanded');
+                          expandIcon.textContent = '▼';
+                      }
+                  }
+
+                  // Function to post correspondence
+                  async function postCorrespondence(event, ticketId) {
+                      const textarea = document.getElementById(`correspondence-input-${ticketId}`);
+                      const message = textarea.value.trim();
+                      
+                      if (!message) {
+                          alert('Please enter a message before posting.');
+                          return;
+                      }
+                      
+                      const button = event.target;
+                      const originalText = button.textContent;
+                      button.textContent = 'Posting...';
+                      button.disabled = true;
+                      
+                      try {
+                          // Send correspondence to backend for database storage
+                          const response = await fetch(`${API_BASE_URL}/api/correspondence`, {
+                              method: 'POST',
+                              headers: {
+                                  'Content-Type': 'application/json',
+                              },
+                              body: JSON.stringify({
+                                  ticketId: ticketId,
+                                  message: message,
+                                  author: 'Workshop Participant',
+                                  sessionId: 'user-session-' + Date.now()
+                              })
+                          });
+                          
+                          if (response.ok) {
+                              const result = await response.json();
+                              
+                              // Create new correspondence item
+                              const correspondenceList = document.getElementById(`correspondence-list-${ticketId}`);
+                              const newCorrespondence = document.createElement('div');
+                              newCorrespondence.className = 'correspondence-item user';
+                              
+                              const timestamp = new Date().toLocaleString();
+                              newCorrespondence.innerHTML = `
+                                  <div class="correspondence-header">
+                                      <strong>Workshop Participant</strong>
+                                      <span class="correspondence-time">${timestamp}</span>
+                                  </div>
+                                  <div class="correspondence-message">${message}</div>
+                              `;
+                              
+                              correspondenceList.appendChild(newCorrespondence);
+                              
+                              // Clear the textarea
+                              textarea.value = '';
+                              
+                              // Update workshop progress based on server response
+                              if (result.moduleUpdated) {
+                                  updateWorkshopProgressFromServer(result.moduleProgress);
+                              }
+                              
+                              // Scroll to the new correspondence
+                              correspondenceList.scrollTop = correspondenceList.scrollHeight;
+                              
+                              // Show success message
+                              button.textContent = 'Posted!';
+                              
+                              setTimeout(() => {
+                                  button.textContent = originalText;
+                                  button.disabled = false;
+                              }, 2000);
+                          } else {
+                              throw new Error('Failed to post correspondence');
+                          }
+                      } catch (error) {
+                          console.error('Error posting correspondence:', error);
+                          alert('Failed to post correspondence. Please try again.');
+                          button.textContent = originalText;
+                          button.disabled = false;
+                      }
+                  }
+
+                  // Function to load workshop progress from database
+                  async function loadWorkshopProgress() {
+                      try {
+                          const response = await fetch(`${API_BASE_URL}/api/workshop-progress`);
+                          if (response.ok) {
+                              const progressData = await response.json();
+                              console.log('Loaded workshop progress:', progressData);
+                              updateWorkshopProgressFromServer(progressData);
+                          } else {
+                              console.warn('Failed to load workshop progress, using defaults');
+                              // Keep default progress values (all 0%)
+                              updateProgressBars();
+                          }
+                      } catch (error) {
+                          console.error('Error loading workshop progress:', error);
+                          // Keep default progress values (all 0%)
+                          updateProgressBars();
+                      }
+                  }
+
+                  // Function to update workshop progress from server response
+                  function updateWorkshopProgressFromServer(moduleProgressData) {
+                      if (moduleProgressData && Array.isArray(moduleProgressData)) {
+                          moduleProgressData.forEach((module, index) => {
+                              if (index < moduleProgress.length) {
+                                  moduleProgress[index] = module.current_progress;
+                                  if (module.current_progress >= 100) {
+                                      currentModuleIndex = Math.max(currentModuleIndex, index + 1);
+                                  }
+                              }
+                          });
+                          updateProgressBars();
+                      }
+                  }
+
+                  // Function to update workshop progress (legacy - kept for compatibility)
+                  function updateWorkshopProgress() {
+                      // Each correspondence advances the current module by 25%
+                      if (currentModuleIndex < moduleProgress.length) {
+                          moduleProgress[currentModuleIndex] += 25;
+                          
+                          // If current module reaches 100%, move to next module
+                          if (moduleProgress[currentModuleIndex] >= 100) {
+                              moduleProgress[currentModuleIndex] = 100;
+                              currentModuleIndex++;
+                          }
+                          
+                          // Update the UI
+                          updateProgressBars();
+                      }
+                  }
+
+                  // Function to update progress bars in the UI
+                  function updateProgressBars() {
+                      const progressModules = document.querySelectorAll('.progress-module');
+                      
+                      progressModules.forEach((module, index) => {
+                          const progressFill = module.querySelector('.progress-fill');
+                          const progressValue = module.querySelector('.progress-value');
+                          
+                          const percentage = moduleProgress[index] || 0;
+                          progressFill.style.width = `${percentage}%`;
+                          progressValue.textContent = `${percentage}%`;
+                      });
+                  }
+
+                  // Function to initialize workshop status to 0%
+                  function initializeWorkshopStatus() {
+                      updateProgressBars();
+                  }
+
+                  document.addEventListener('DOMContentLoaded', () => {
+                      loadImages();
+                  });
+              </script>
+          </body>
+          </html>'''
+                      
+                      return {
+                          'statusCode': 200,
+                          'headers': {
+                              'Content-Type': 'text/html',
+                              'Cache-Control': 'no-cache'
+                          },
+                          'body': html_content
+                      }
+                  
+                  elif path == '/api/images':
+                      # Return images from database
+                      images = get_images_from_db()
+                      
+                      return {
+                          'statusCode': 200,
+                          'headers': {
+                              'Content-Type': 'application/json',
+                              'Access-Control-Allow-Origin': '*',
+                              'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+                              'Access-Control-Allow-Headers': 'Content-Type'
+                          },
+                          'body': json.dumps(images)
+                      }
+                  
+                  elif path == '/api/correspondence' and method == 'POST':
+                      # Handle correspondence posting
+                      try:
+                          body = event.get('body', '{}')
+                          if event.get('isBase64Encoded', False):
+                              import base64
+                              body = base64.b64decode(body).decode('utf-8')
+                          
+                          data = json.loads(body)
+                          ticket_id = data.get('ticketId')
+                          message = data.get('message')
+                          author = data.get('author', 'Unknown')
+                          session_id = data.get('sessionId')
+                          
+                          if not ticket_id or not message:
+                              return {
+                                  'statusCode': 400,
+                                  'headers': {
+                                      'Content-Type': 'application/json',
+                                      'Access-Control-Allow-Origin': '*'
+                                  },
+                                  'body': json.dumps({'error': 'ticketId and message are required'})
+                              }
+                          
+                          # Store correspondence and update module progress
+                          result = store_correspondence_and_update_progress(ticket_id, message, author, session_id)
+                          
+                          return {
+                              'statusCode': 200,
+                              'headers': {
+                                  'Content-Type': 'application/json',
+                                  'Access-Control-Allow-Origin': '*',
+                                  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+                                  'Access-Control-Allow-Headers': 'Content-Type'
+                              },
+                              'body': json.dumps(result)
+                          }
+                          
+                      except Exception as e:
+                          print(f"Error handling correspondence: {e}")
+                          return {
+                              'statusCode': 500,
+                              'headers': {
+                                  'Content-Type': 'application/json',
+                                  'Access-Control-Allow-Origin': '*'
+                              },
+                              'body': json.dumps({'error': 'Internal server error'})
+                          }
+                  
+                  elif path == '/api/correspondence' and method == 'GET':
+                      # Handle correspondence history retrieval
+                      try:
+                          # Get ticket_id from query parameters
+                          query_params = event.get('queryStringParameters') or {}
+                          ticket_id = query_params.get('ticketId')
+                          
+                          if not ticket_id:
+                              return {
+                                  'statusCode': 400,
+                                  'headers': {
+                                      'Content-Type': 'application/json',
+                                      'Access-Control-Allow-Origin': '*'
+                                  },
+                                  'body': json.dumps({'error': 'ticketId parameter is required'})
+                              }
+                          
+                          # Get correspondence history from database
+                          correspondence = get_correspondence_history(ticket_id)
+                          
+                          return {
+                              'statusCode': 200,
+                              'headers': {
+                                  'Content-Type': 'application/json',
+                                  'Access-Control-Allow-Origin': '*',
+                                  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+                                  'Access-Control-Allow-Headers': 'Content-Type'
+                              },
+                              'body': json.dumps(correspondence)
+                          }
+                          
+                      except Exception as e:
+                          print(f"Error getting correspondence history: {e}")
+                          return {
+                              'statusCode': 500,
+                              'headers': {
+                                  'Content-Type': 'application/json',
+                                  'Access-Control-Allow-Origin': '*'
+                              },
+                              'body': json.dumps({'error': 'Internal server error'})
+                          }
+                  
+                  elif path == '/api/workshop-progress' and method == 'GET':
+                      # Handle workshop progress retrieval
+                      try:
+                          # Get workshop progress from database
+                          progress = get_workshop_progress()
+                          
+                          return {
+                              'statusCode': 200,
+                              'headers': {
+                                  'Content-Type': 'application/json',
+                                  'Access-Control-Allow-Origin': '*',
+                                  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+                                  'Access-Control-Allow-Headers': 'Content-Type'
+                              },
+                              'body': json.dumps(progress)
+                          }
+                          
+                      except Exception as e:
+                          print(f"Error getting workshop progress: {e}")
+                          return {
+                              'statusCode': 500,
+                              'headers': {
+                                  'Content-Type': 'application/json',
+                                  'Access-Control-Allow-Origin': '*'
+                              },
+                              'body': json.dumps({'error': 'Internal server error'})
+                          }
+                  
+                  elif path == '/api/correspondence' and method == 'OPTIONS':
+                      # Handle CORS preflight requests for correspondence
+                      return {
+                          'statusCode': 200,
+                          'headers': {
+                              'Access-Control-Allow-Origin': '*',
+                              'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+                              'Access-Control-Allow-Headers': 'Content-Type',
+                              'Access-Control-Max-Age': '86400'
+                          },
+                          'body': ''
+                      }
+                  
+                  elif path == '/api/workshop-progress' and method == 'OPTIONS':
+                      # Handle CORS preflight requests for workshop progress
+                      return {
+                          'statusCode': 200,
+                          'headers': {
+                              'Access-Control-Allow-Origin': '*',
+                              'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+                              'Access-Control-Allow-Headers': 'Content-Type',
+                              'Access-Control-Max-Age': '86400'
+                          },
+                          'body': ''
+                      }
+                  
+                  else:
+                      return {
+                          'statusCode': 404,
+                          'headers': {'Content-Type': 'text/plain'},
+                          'body': f'Not found: {path}'
+                      }
+              
+              except Exception as e:
+                  print(f"HTML Renderer Lambda error: {str(e)}")
+                  return {
+                      'statusCode': 500,
+                      'headers': {
+                          'Content-Type': 'application/json',
+                          'Access-Control-Allow-Origin': '*'
+                      },
+                      'body': json.dumps({'error': f'Internal server error: {str(e)}'})
+                  }
+
+  # ==========================================
+  # LAMBDA 2: IMAGE PROCESSING AND S3 UPLOAD
+  # ==========================================
+  ImageProcessingFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: sample-app-image-processor
+      Runtime: python3.9
+      Handler: index.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 30
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+        SubnetIds:
+          - !Ref AppPrivateSubnet1
+          - !Ref AppPrivateSubnet2
+      Environment:
+        Variables:
+          S3_BUCKET: !Ref ImageBucket
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import os
+          from botocore.exceptions import ClientError
+          import base64
+          
+          s3_client = boto3.client('s3')
+          
+          def lambda_handler(event, context):
+              try:
+                  # Get the path from ALB event
+                  path = event.get('path', '/')
+                  method = event.get('httpMethod', 'GET')
+                  
+                  print(f"Image Processor Request: {method} {path}")
+                  
+                  if path.startswith('/images/'):
+                      # Serve image files directly from S3 through Lambda
+                      s3_key = path[1:]  # Remove leading slash
+                      try:
+                          print(f"Attempting to serve image: {s3_key} from bucket: {os.environ['S3_BUCKET']}")
+                          
+                          # Get image directly from S3
+                          response = s3_client.get_object(Bucket=os.environ['S3_BUCKET'], Key=s3_key)
+                          image_content = response['Body'].read()
+                          
+                          # Determine content type based on file extension
+                          content_type = 'image/jpeg'  # Default to JPEG
+                          if s3_key.lower().endswith('.png'):
+                              content_type = 'image/png'
+                          elif s3_key.lower().endswith('.gif'):
+                              content_type = 'image/gif'
+                          elif s3_key.lower().endswith('.webp'):
+                              content_type = 'image/webp'
+                          elif s3_key.lower().endswith('.svg'):
+                              content_type = 'image/svg+xml'
+                          
+                          print(f"Successfully retrieved image {s3_key}, size: {len(image_content)} bytes, content-type: {content_type}")
+                          
+                          return {
+                              'statusCode': 200,
+                              'headers': {
+                                  'Content-Type': content_type,
+                                  'Cache-Control': 'public, max-age=3600',
+                                  'Access-Control-Allow-Origin': '*'
+                              },
+                              'body': base64.b64encode(image_content).decode('utf-8'),
+                              'isBase64Encoded': True
+                          }
+                      except ClientError as e:
+                          print(f"S3 ClientError serving image {s3_key}: {e}")
+                          error_code = e.response['Error']['Code']
+                          if error_code == 'NoSuchKey':
+                              print(f"Image {s3_key} not found in S3 bucket {os.environ['S3_BUCKET']}")
+                          return {
+                              'statusCode': 404,
+                              'headers': {
+                                  'Content-Type': 'text/plain',
+                                  'Access-Control-Allow-Origin': '*'
+                              },
+                              'body': f'Image not found: {s3_key}'
+                          }
+                      except Exception as e:
+                          print(f"Unexpected error serving image {s3_key}: {e}")
+                          return {
+                              'statusCode': 500,
+                              'headers': {
+                                  'Content-Type': 'text/plain',
+                                  'Access-Control-Allow-Origin': '*'
+                              },
+                              'body': f'Error serving image: {str(e)}'
+                          }
+                  
+                  else:
+                      return {
+                          'statusCode': 404,
+                          'headers': {'Content-Type': 'text/plain'},
+                          'body': f'Not found: {path}'
+                      }
+              
+              except Exception as e:
+                  print(f"Image Processor Lambda error: {str(e)}")
+                  return {
+                      'statusCode': 500,
+                      'headers': {
+                          'Content-Type': 'application/json',
+                          'Access-Control-Allow-Origin': '*'
+                      },
+                      'body': json.dumps({'error': f'Internal server error: {str(e)}'})
+                  }
+
+  # ==========================================
+  # LAMBDA 3: USER INTERACTIONS AND DATABASE UPDATES
+  # ==========================================
+  UserInteractionFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: sample-app-user-interactions
+      Runtime: python3.9
+      Handler: index.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 30
+      Layers:
+        - !Ref PyMySQLLayer
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+        SubnetIds:
+          - !Ref AppPrivateSubnet1
+          - !Ref AppPrivateSubnet2
+      Environment:
+        Variables:
+          DB_HOST: !GetAtt ImageMetadataDatabase.Endpoint.Address
+          DB_USER: !Ref DBUsername
+          DB_PASSWORD: !Ref DBPassword
+          DB_NAME: image_metadata
+      Code:
+        ZipFile: |
+          import json
+          import os
+          from datetime import datetime
+          
+          # Import pymysql - fail if not available
+          import pymysql
+          
+          # Global database connection
+          db_connection = None
+          
+          def get_db_connection():
+              """Get database connection"""
+              global db_connection
+              
+              if db_connection is None or not db_connection.open:
+                  try:
+                      db_connection = pymysql.connect(
+                          host=os.environ['DB_HOST'],
+                          user=os.environ['DB_USER'],
+                          password=os.environ['DB_PASSWORD'],
+                          database=os.environ['DB_NAME'],
+                          charset='utf8mb4',
+                          cursorclass=pymysql.cursors.DictCursor,
+                          autocommit=True
+                      )
+                      print("Database connection established")
+                  except Exception as e:
+                      print(f"Database connection error: {e}")
+                      # Fallback connection without specifying database
+                      try:
+                          db_connection = pymysql.connect(
+                              host=os.environ['DB_HOST'],
+                              user=os.environ['DB_USER'],
+                              password=os.environ['DB_PASSWORD'],
+                              charset='utf8mb4',
+                              cursorclass=pymysql.cursors.DictCursor,
+                              autocommit=True
+                          )
+                          print("Database connection established without database name")
+                      except Exception as e2:
+                          print(f"Fallback database connection error: {e2}")
+                          raise Exception("Failed to establish database connection")
+              
+              return db_connection
+          
+          def track_interaction_db(image_id, action, session_id=None):
+              """Track user interaction in MySQL database"""
+              try:
+                  image_id = int(image_id)
+                  conn = get_db_connection()
+                  
+                  with conn.cursor() as cursor:
+                      # Use the correct database
+                      cursor.execute(f"USE {os.environ['DB_NAME']}")
+                      
+                      # Insert interaction record
+                      cursor.execute("""
+                          INSERT INTO image_interactions (image_id, action, session_id, created_at)
+                          VALUES (%s, %s, %s, NOW())
+                      """, (image_id, action, session_id))
+                      
+                      # Update the count in the images table
+                      if action == 'like':
+                          cursor.execute("""
+                              UPDATE images 
+                              SET likes_count = likes_count + 1, updated_at = NOW()
+                              WHERE id = %s
+                          """, (image_id,))
+                      elif action == 'share':
+                          cursor.execute("""
+                              UPDATE images 
+                              SET shares_count = shares_count + 1, updated_at = NOW()
+                              WHERE id = %s
+                          """, (image_id,))
+                      elif action == 'view':
+                          cursor.execute("""
+                              UPDATE images 
+                              SET views_count = views_count + 1, updated_at = NOW()
+                              WHERE id = %s
+                          """, (image_id,))
+                      
+                      # Get updated counts
+                      cursor.execute("""
+                          SELECT likes_count, shares_count, views_count 
+                          FROM images 
+                          WHERE id = %s
+                      """, (image_id,))
+                      
+                      result = cursor.fetchone()
+                      if result:
+                          print(f"Tracked {action} for image {image_id}. New counts: likes={result['likes_count']}, shares={result['shares_count']}, views={result['views_count']}")
+                      
+                      return True
+                      
+              except Exception as e:
+                  print(f"Error tracking interaction in database: {e}")
+                  raise Exception(f"Failed to track {action} interaction in database: {e}")
+          
+          def lambda_handler(event, context):
+              try:
+                  # Get the path from ALB event
+                  path = event.get('path', '/')
+                  method = event.get('httpMethod', 'GET')
+                  
+                  print(f"User Interaction Request: {method} {path}")
+                  
+                  if path == '/api/track/like' and method == 'POST':
+                      # Handle like tracking
+                      try:
+                          body = event.get('body', '{}')
+                          if event.get('isBase64Encoded', False):
+                              import base64
+                              body = base64.b64decode(body).decode('utf-8')
+                          
+                          data = json.loads(body)
+                          image_id = data.get('imageId')
+                          session_id = data.get('sessionId')
+                          
+                          if not image_id:
+                              return {
+                                  'statusCode': 400,
+                                  'headers': {
+                                      'Content-Type': 'application/json',
+                                      'Access-Control-Allow-Origin': '*'
+                                  },
+                                  'body': json.dumps({'error': 'imageId is required'})
+                              }
+                          
+                          # Track the like in database
+                          success = track_interaction_db(image_id, 'like', session_id)
+                          
+                          if success:
+                              return {
+                                  'statusCode': 200,
+                                  'headers': {
+                                      'Content-Type': 'application/json',
+                                      'Access-Control-Allow-Origin': '*'
+                                  },
+                                  'body': json.dumps({'status': 'success', 'action': 'like', 'imageId': image_id})
+                              }
+                          else:
+                              return {
+                                  'statusCode': 500,
+                                  'headers': {
+                                      'Content-Type': 'application/json',
+                                      'Access-Control-Allow-Origin': '*'
+                                  },
+                                  'body': json.dumps({'error': 'Failed to track like'})
+                              }
+                      except Exception as e:
+                          print(f"Error tracking like: {e}")
+                          return {
+                              'statusCode': 500,
+                              'headers': {
+                                  'Content-Type': 'application/json',
+                                  'Access-Control-Allow-Origin': '*'
+                              },
+                              'body': json.dumps({'error': 'Internal server error'})
+                          }
+                  
+                  elif path == '/api/track/share' and method == 'POST':
+                      # Handle share tracking
+                      try:
+                          body = event.get('body', '{}')
+                          if event.get('isBase64Encoded', False):
+                              import base64
+                              body = base64.b64decode(body).decode('utf-8')
+                          
+                          data = json.loads(body)
+                          image_id = data.get('imageId')
+                          session_id = data.get('sessionId')
+                          
+                          if not image_id:
+                              return {
+                                  'statusCode': 400,
+                                  'headers': {
+                                      'Content-Type': 'application/json',
+                                      'Access-Control-Allow-Origin': '*'
+                                  },
+                                  'body': json.dumps({'error': 'imageId is required'})
+                              }
+                          
+                          # Track the share in database
+                          success = track_interaction_db(image_id, 'share', session_id)
+                          
+                          if success:
+                              return {
+                                  'statusCode': 200,
+                                  'headers': {
+                                      'Content-Type': 'application/json',
+                                      'Access-Control-Allow-Origin': '*'
+                                  },
+                                  'body': json.dumps({'status': 'success', 'action': 'share', 'imageId': image_id})
+                              }
+                          else:
+                              return {
+                                  'statusCode': 500,
+                                  'headers': {
+                                      'Content-Type': 'application/json',
+                                      'Access-Control-Allow-Origin': '*'
+                                  },
+                                  'body': json.dumps({'error': 'Failed to track share'})
+                              }
+                      except Exception as e:
+                          print(f"Error tracking share: {e}")
+                          return {
+                              'statusCode': 500,
+                              'headers': {
+                                  'Content-Type': 'application/json',
+                                  'Access-Control-Allow-Origin': '*'
+                              },
+                              'body': json.dumps({'error': 'Internal server error'})
+                          }
+                  
+                  elif (path == '/api/track/like' or path == '/api/track/share') and method == 'OPTIONS':
+                      # Handle CORS preflight requests
+                      return {
+                          'statusCode': 200,
+                          'headers': {
+                              'Access-Control-Allow-Origin': '*',
+                              'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+                              'Access-Control-Allow-Headers': 'Content-Type',
+                              'Access-Control-Max-Age': '86400'
+                          },
+                          'body': ''
+                      }
+                  
+                  elif path == '/api/track/view' and method == 'POST':
+                      # Handle view tracking
+                      try:
+                          body = event.get('body', '{}')
+                          if event.get('isBase64Encoded', False):
+                              import base64
+                              body = base64.b64decode(body).decode('utf-8')
+                          
+                          data = json.loads(body)
+                          image_id = data.get('imageId')
+                          session_id = data.get('sessionId')
+                          
+                          if not image_id:
+                              return {
+                                  'statusCode': 400,
+                                  'headers': {
+                                      'Content-Type': 'application/json',
+                                      'Access-Control-Allow-Origin': '*'
+                                  },
+                                  'body': json.dumps({'error': 'imageId is required'})
+                              }
+                          
+                          # Track the view in database
+                          success = track_interaction_db(image_id, 'view', session_id)
+                          
+                          if success:
+                              return {
+                                  'statusCode': 200,
+                                  'headers': {
+                                      'Content-Type': 'application/json',
+                                      'Access-Control-Allow-Origin': '*'
+                                  },
+                                  'body': json.dumps({'status': 'success', 'action': 'view', 'imageId': image_id})
+                              }
+                          else:
+                              return {
+                                  'statusCode': 500,
+                                  'headers': {
+                                      'Content-Type': 'application/json',
+                                      'Access-Control-Allow-Origin': '*'
+                                  },
+                                  'body': json.dumps({'error': 'Failed to track view'})
+                              }
+                      except Exception as e:
+                          print(f"Error tracking view: {e}")
+                          return {
+                              'statusCode': 500,
+                              'headers': {
+                                  'Content-Type': 'application/json',
+                                  'Access-Control-Allow-Origin': '*'
+                              },
+                              'body': json.dumps({'error': 'Internal server error'})
+                          }
+                  
+                  else:
+                      return {
+                          'statusCode': 404,
+                          'headers': {'Content-Type': 'text/plain'},
+                          'body': f'Not found: {path}'
+                      }
+              
+              except Exception as e:
+                  print(f"User Interaction Lambda error: {str(e)}")
+                  return {
+                      'statusCode': 500,
+                      'headers': {
+                          'Content-Type': 'application/json',
+                          'Access-Control-Allow-Origin': '*'
+                      },
+                      'body': json.dumps({'error': f'Internal server error: {str(e)}'})
+                  }
+
+  # ==========================================
+  # APPLICATION LOAD BALANCER WITH 3 TARGET GROUPS
+  # ==========================================
+  ApplicationLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: sample-app-image-sharing-alb
+      Scheme: internet-facing
+      Type: application
+      Subnets:
+        - !Ref AppPublicSubnet1
+        - !Ref AppPublicSubnet2
+      SecurityGroups:
+        - !Ref ALBSecurityGroup
+      Tags:
+        - Key: Name
+          Value: sample-app-ImageSharing-ALB
+
+  # Target Group 1: HTML Rendering Lambda
+  HTMLRenderingTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: sample-app-html-renderer-tg
+      TargetType: lambda
+      Targets:
+        - Id: !GetAtt HTMLRenderingFunction.Arn
+
+
+  # Target Group 3: User Interaction Lambda
+  UserInteractionTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: sample-app-user-interaction-tg
+      TargetType: lambda
+      Targets:
+        - Id: !GetAtt UserInteractionFunction.Arn
+
+  # ALB Listener with routing rules
+  ALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref HTMLRenderingTargetGroup
+      LoadBalancerArn: !Ref ApplicationLoadBalancer
+      Port: 80
+      Protocol: HTTP
+
+  # Target Group 2: Image Processing Lambda (for serving images)
+  ImageProcessingTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: sample-app-image-processor-tg
+      TargetType: lambda
+      Targets:
+        - Id: !GetAtt ImageProcessingFunction.Arn
+
+  # Listener Rules for routing to different Lambda functions
+  ImageProcessingListenerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref ImageProcessingTargetGroup
+      Conditions:
+        - Field: path-pattern
+          Values:
+            - '/images/*'
+      ListenerArn: !Ref ALBListener
+      Priority: 50
+
+  UserInteractionListenerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref UserInteractionTargetGroup
+      Conditions:
+        - Field: path-pattern
+          Values:
+            - '/api/track/*'
+      ListenerArn: !Ref ALBListener
+      Priority: 100
+
+  CorrespondenceListenerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref HTMLRenderingTargetGroup
+      Conditions:
+        - Field: path-pattern
+          Values:
+            - '/api/correspondence'
+      ListenerArn: !Ref ALBListener
+      Priority: 75
+
+  WorkshopProgressListenerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref HTMLRenderingTargetGroup
+      Conditions:
+        - Field: path-pattern
+          Values:
+            - '/api/workshop-progress'
+      ListenerArn: !Ref ALBListener
+      Priority: 80
+
+  # Lambda Invoke Permissions for ALB (Only Lambda 1 and Lambda 3)
+  HTMLRenderingLambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref HTMLRenderingFunction
+      Principal: elasticloadbalancing.amazonaws.com
+      SourceArn: !Sub "arn:aws:elasticloadbalancing:${AWS::Region}:${AWS::AccountId}:targetgroup/sample-app-html-renderer-tg/*"
+
+  ImageProcessingLambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref ImageProcessingFunction
+      Principal: elasticloadbalancing.amazonaws.com
+      SourceArn: !Sub "arn:aws:elasticloadbalancing:${AWS::Region}:${AWS::AccountId}:targetgroup/sample-app-image-processor-tg/*"
+
+  UserInteractionLambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref UserInteractionFunction
+      Principal: elasticloadbalancing.amazonaws.com
+      SourceArn: !Sub "arn:aws:elasticloadbalancing:${AWS::Region}:${AWS::AccountId}:targetgroup/sample-app-user-interaction-tg/*"
+
+  # ==========================================
+  # REPORTING EC2 INSTANCE
+  # ==========================================
+  ReportingServer:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Sub '{{resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64}}'
+      InstanceType: t3.micro
+      SubnetId: !Ref ReportingPrivateSubnet
+      SecurityGroupIds:
+        - !Ref ReportingServerSecurityGroup
+      IamInstanceProfile: !Ref ReportingServerInstanceProfile
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          yum update -y
+          yum install -y python3 python3-pip mysql amazon-ssm-agent
+          pip3 install boto3 pymysql
+          
+          # Enable and start SSM agent
+          systemctl enable amazon-ssm-agent
+          systemctl start amazon-ssm-agent
+          
+          # Create reporting script
+          cat > /home/ec2-user/reporting_script.py << 'EOF'
+          import boto3
+          import pymysql
+          import os
+          import time
+          import json
+          from datetime import datetime, timedelta
+          
+          # CloudWatch client
+          cloudwatch = boto3.client('cloudwatch')
+          
+          # Database connection parameters
+          DB_HOST = "${ImageMetadataDatabase.Endpoint.Address}"
+          DB_USER = "${DBUsername}"
+          DB_PASSWORD = "${DBPassword}"
+          DB_NAME = "image_metadata"
+          
+          def get_db_connection():
+              """Get database connection"""
+              try:
+                  connection = pymysql.connect(
+                      host=DB_HOST,
+                      user=DB_USER,
+                      password=DB_PASSWORD,
+                      database=DB_NAME,
+                      charset='utf8mb4',
+                      cursorclass=pymysql.cursors.DictCursor,
+                      autocommit=True
+                  )
+                  print("Database connection established")
+                  return connection
+              except Exception as e:
+                  print(f"Database connection error: {e}")
+                  return None
+          
+          def fetch_reporting_data():
+              """Fetch data from database for reporting"""
+              try:
+                  conn = get_db_connection()
+                  if not conn:
+                      return None
+                  
+                  with conn.cursor() as cursor:
+                      cursor.execute("""
+                          SELECT 
+                              title as display_name,
+                              likes_count as likes,
+                              shares_count as shares,
+                              ROUND(
+                                  (likes_count * 0.6 + shares_count * 0.4 + views_count * 0.1) / 10, 1
+                              ) as popularity_score
+                          FROM images 
+                          ORDER BY id
+                      """)
+                      
+                      results = cursor.fetchall()
+                      conn.close()
+                      return results
+                      
+              except Exception as e:
+                  print(f"Error fetching reporting data: {e}")
+                  return None
+          
+          def publish_metrics():
+              """Publish metrics to CloudWatch"""
+              try:
+                  # Fetch real data from database
+                  reporting_data = fetch_reporting_data()
+                  
+                  if reporting_data:
+                      total_likes = sum(row['likes'] for row in reporting_data)
+                      total_shares = sum(row['shares'] for row in reporting_data)
+                      total_images = len(reporting_data)
+                      avg_popularity = sum(row['popularity_score'] for row in reporting_data) / total_images if total_images > 0 else 0
+                      
+                      # Publish metrics to CloudWatch
+                      cloudwatch.put_metric_data(
+                          Namespace='ImageSharing/Reporting',
+                          MetricData=[
+                              {
+                                  'MetricName': 'TotalLikes',
+                                  'Value': total_likes,
+                                  'Unit': 'Count',
+                                  'Timestamp': datetime.now()
+                              },
+                              {
+                                  'MetricName': 'TotalShares',
+                                  'Value': total_shares,
+                                  'Unit': 'Count',
+                                  'Timestamp': datetime.now()
+                              },
+                              {
+                                  'MetricName': 'TotalImages',
+                                  'Value': total_images,
+                                  'Unit': 'Count',
+                                  'Timestamp': datetime.now()
+                              },
+                              {
+                                  'MetricName': 'AveragePopularityScore',
+                                  'Value': avg_popularity,
+                                  'Unit': 'None',
+                                  'Timestamp': datetime.now()
+                              }
+                          ]
+                      )
+                      
+                      print(f"Published metrics at {datetime.now()}: Likes={total_likes}, Shares={total_shares}, Images={total_images}, AvgPopularity={avg_popularity:.1f}")
+                      
+                      # Log individual image data for debugging
+                      for row in reporting_data:
+                          print(f"  {row['display_name']}: {row['likes']} likes, {row['shares']} shares, popularity={row['popularity_score']}")
+                  else:
+                      print("No reporting data available")
+              
+              except Exception as e:
+                  print(f"Error publishing metrics: {e}")
+          
+          def main():
+              """Main reporting loop"""
+              print("Starting ACME Image Platform Reporting Service")
+              print(f"Database: {DB_HOST}")
+              print(f"User: {DB_USER}")
+              
+              # Initial connection test
+              conn = get_db_connection()
+              if conn:
+                  conn.close()
+                  print("Initial database connection successful")
+              else:
+                  print("Initial database connection failed")
+              
+              # Main loop
+              while True:
+                  try:
+                      publish_metrics()
+                  except Exception as e:
+                      print(f"Error in main loop: {e}")
+                  time.sleep(300)  # Run every 5 minutes
+          
+          if __name__ == "__main__":
+              main()
+          EOF
+          
+          # Create systemd service
+          cat > /etc/systemd/system/image-reporting.service << 'EOF'
+          [Unit]
+          Description=Image Gallery Reporting Service
+          After=network.target
+          
+          [Service]
+          Type=simple
+          User=ec2-user
+          WorkingDirectory=/home/ec2-user
+          ExecStart=/usr/bin/python3 /home/ec2-user/reporting_script.py
+          Restart=always
+          
+          [Install]
+          WantedBy=multi-user.target
+          EOF
+          
+          systemctl enable image-reporting
+          systemctl start image-reporting
+      Tags:
+        - Key: Name
+          Value: sample-app-ReportingServer
+        - Key: NetworkFlowMonitor
+          Value: enabled
+
+  # ==========================================
+  # ROUTE 53 PRIVATE HOSTED ZONE
+  # ==========================================
+  AcmePrivateHostedZone:
+    Type: AWS::Route53::HostedZone
+    Properties:
+      Name: acme.com
+      VPCs:
+        - VPCId: !Ref AppVPC
+          VPCRegion: !Ref AWS::Region
+        - VPCId: !Ref ReportingVPC
+          VPCRegion: !Ref AWS::Region
+      HostedZoneConfig:
+        Comment: Private hosted zone for ACME.com internal services
+      HostedZoneTags:
+        - Key: Name
+          Value: acme.com-private-zone
+
+  DatabaseDNSRecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref AcmePrivateHostedZone
+      Name: database.acme.com
+      Type: CNAME
+      TTL: 300
+      ResourceRecords:
+        - !GetAtt ImageMetadataDatabase.Endpoint.Address
+
+  ReportingServerDNSRecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref AcmePrivateHostedZone
+      Name: reporting.acme.com
+      Type: A
+      TTL: 300
+      ResourceRecords:
+        - !GetAtt ReportingServer.PrivateIp
+
+  BastionDNSRecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref AcmePrivateHostedZone
+      Name: bastion.acme.com
+      Type: A
+      TTL: 300
+      ResourceRecords:
+        - !GetAtt BastionEC2Instance.PrivateIp
+
+  # ==========================================
+  # TRAFFIC MIRRORING INFRASTRUCTURE
+  # ==========================================
+  
+  # S3 Bucket for Traffic Mirroring Storage
+  TrafficMirroringS3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "traffic-mirroring-analysis-${AWS::AccountId}"
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: TrafficMirroringLifecycle
+            Status: Enabled
+            Transitions:
+              - TransitionInDays: 30
+                StorageClass: STANDARD_IA
+              - TransitionInDays: 90
+                StorageClass: GLACIER
+              - TransitionInDays: 365
+                StorageClass: DEEP_ARCHIVE
+            ExpirationInDays: 2555  # 7 years retention
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags:
+        - Key: Name
+          Value: sample-app-TrafficMirroring-S3Bucket
+        - Key: Purpose
+          Value: PacketCapture
+
+  # S3 Bucket Policy for Traffic Mirroring
+  TrafficMirroringS3BucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    DependsOn:
+      - TrafficMirroringS3Bucket
+      - TrafficMirroringTargetInstanceRole
+      - PacketAnalysisLambdaRole
+    Properties:
+      Bucket: !Ref TrafficMirroringS3Bucket
+      PolicyDocument:
+        Statement:
+          - Sid: AllowTrafficMirroringTargetAccess
+            Effect: Allow
+            Principal:
+              AWS: !GetAtt TrafficMirroringTargetInstanceRole.Arn
+            Action:
+              - s3:PutObject
+              - s3:PutObjectAcl
+              - s3:GetObject
+            Resource: !Sub "arn:aws:s3:::${TrafficMirroringS3Bucket}/*"
+          - Sid: AllowTrafficMirroringTargetListBucket
+            Effect: Allow
+            Principal:
+              AWS: !GetAtt TrafficMirroringTargetInstanceRole.Arn
+            Action:
+              - s3:ListBucket
+            Resource: !Sub "arn:aws:s3:::${TrafficMirroringS3Bucket}"
+          - Sid: AllowPacketAnalysisLambdaAccess
+            Effect: Allow
+            Principal:
+              AWS: !GetAtt PacketAnalysisLambdaRole.Arn
+            Action:
+              - s3:GetObject
+              - s3:PutObject
+            Resource: !Sub "arn:aws:s3:::${TrafficMirroringS3Bucket}/*"
+          - Sid: DenyInsecureConnections
+            Effect: Deny
+            Principal: "*"
+            Action: "s3:*"
+            Resource:
+              - !Sub "arn:aws:s3:::${TrafficMirroringS3Bucket}"
+              - !Sub "arn:aws:s3:::${TrafficMirroringS3Bucket}/*"
+            Condition:
+              Bool:
+                "aws:SecureTransport": "false"
+
+  # IAM Role for Traffic Mirroring Target Instance
+  TrafficMirroringTargetInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
+      Policies:
+        - PolicyName: TrafficMirroringS3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:PutObjectAcl
+                  - s3:GetObject
+                  - s3:ListBucket
+                Resource:
+                  - !Sub "arn:aws:s3:::${TrafficMirroringS3Bucket}/*"
+                  - !GetAtt TrafficMirroringS3Bucket.Arn
+        - PolicyName: CloudWatchMetrics
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cloudwatch:PutMetricData
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: "*"
+        - PolicyName: TrafficMirroringManagement
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ec2:CreateTrafficMirrorTarget
+                  - ec2:CreateTrafficMirrorFilter
+                  - ec2:CreateTrafficMirrorSession
+                  - ec2:CreateTrafficMirrorFilterRule
+                  - ec2:DescribeTrafficMirrorTargets
+                  - ec2:DescribeTrafficMirrorFilters
+                  - ec2:DescribeTrafficMirrorSessions
+                  - ec2:DescribeInstances
+                  - ec2:DescribeNetworkInterfaces
+                  - ec2:ModifyTrafficMirrorSession
+                  - ec2:DeleteTrafficMirrorSession
+                  - ec2:DeleteTrafficMirrorFilter
+                  - ec2:DeleteTrafficMirrorTarget
+                Resource: "*"
+      Tags:
+        - Key: Name
+          Value: sample-app-TrafficMirroring-Target-Role
+
+  TrafficMirroringTargetInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref TrafficMirroringTargetInstanceRole
+
+  # Security Group for Traffic Mirroring Target
+  TrafficMirroringTargetSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for Traffic Mirroring Target
+      VpcId: !Ref AppVPC
+      SecurityGroupIngress:
+        - IpProtocol: udp
+          FromPort: 4789
+          ToPort: 4789
+          CidrIp: 10.2.0.0/16
+          Description: VXLAN traffic from App VPC
+        - IpProtocol: udp
+          FromPort: 4789
+          ToPort: 4789
+          CidrIp: 10.1.0.0/16
+          Description: VXLAN traffic from Reporting VPC
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: sample-app-TrafficMirroring-Target-SG
+
+  # Traffic Mirroring Target Instance
+  TrafficMirroringTargetInstance:
+    Type: AWS::EC2::Instance
+    DependsOn:
+      - TrafficMirroringTargetInstanceProfile
+      - TrafficMirroringTargetSecurityGroup
+    Properties:
+      ImageId: !Sub '{{resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64}}'
+      InstanceType: t3.medium  # Sufficient for packet capture processing
+      SubnetId: !Ref AppPrivateSubnet2  # Different subnet from source
+      SecurityGroupIds:
+        - !Ref TrafficMirroringTargetSecurityGroup
+      IamInstanceProfile: !Ref TrafficMirroringTargetInstanceProfile
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          yum update -y
+          yum install -y tcpdump amazon-ssm-agent aws-cli tshark
+          
+          # Install Mountpoint for Amazon S3
+          wget https://s3.amazonaws.com/mountpoint-s3-release/latest/x86_64/mount-s3.rpm
+          sudo yum install -y ./mount-s3.rpm
+          
+          # Create mount directory
+          mkdir -p /mnt/packet-captures
+          
+          # Mount S3 bucket using Mountpoint
+          mount-s3 ${TrafficMirroringS3Bucket} /mnt/packet-captures
+          
+          # Add to fstab for persistent mounting
+          echo "${TrafficMirroringS3Bucket} /mnt/packet-captures fuse.mount-s3 _netdev,allow-delete,region=${AWS::Region} 0 0" >> /etc/fstab
+          
+          # Create systemd service for traffic capture
+          cat > /etc/systemd/system/trafficmirror-tcpdump.service << 'EOF'
+          [Unit]
+          Description=Traffic Mirror TCP Dump Service
+          After=network.target
+          
+          [Service]
+          Type=simple
+          User=root
+          ExecStart=/opt/traffic-mirroring/run_tcpdump.sh
+          Restart=always
+          RestartSec=10
+          
+          [Install]
+          WantedBy=multi-user.target
+          EOF
+          
+          # Create systemd service for service monitoring
+          cat > /etc/systemd/system/trafficmirror-svc-alerts.service << 'EOF'
+          [Unit]
+          Description=Traffic Mirror Service Alerts
+          After=network.target
+          
+          [Service]
+          Type=simple
+          User=root
+          ExecStart=/opt/traffic-mirroring/monitor_service.sh
+          Restart=always
+          RestartSec=30
+          
+          [Install]
+          WantedBy=multi-user.target
+          EOF
+          
+          # Create TCP dump script
+          mkdir -p /opt/traffic-mirroring
+          cat > /opt/traffic-mirroring/run_tcpdump.sh << 'EOF'
+          #!/bin/bash
+          CAPTURE_DIR="/mnt/packet-captures/raw-captures"
+          DATE_PATH="year=$(date +%Y)/month=$(date +%m)/day=$(date +%d)"
+          INSTANCE_ID=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
+          
+          # Create directory structure
+          mkdir -p "$CAPTURE_DIR/$DATE_PATH/instance-$INSTANCE_ID"
+          
+          # Start packet capture with 15-minute rotation (900 seconds)
+          tcpdump -i any -w "$CAPTURE_DIR/$DATE_PATH/instance-$INSTANCE_ID/capture-%Y%m%d-%H%M%S.pcap" \
+                  -G 900 -W 96 -Z root
+          EOF
+          
+          # Create enhanced traffic mirroring session management script
+          cat > /opt/traffic-mirroring/manage_sessions.sh << 'EOF'
+          #!/bin/bash
+          # Enhanced Traffic Mirroring Session Management
+          # Based on AWS blog post architecture with intelligent filtering
+          
+          INSTANCE_ID=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
+          REGION=$(curl -s http://169.254.169.254/latest/meta-data/placement/region)
+          
+          # Function to create traffic mirroring target
+          create_traffic_mirroring_target() {
+              local target_eni=$(aws ec2 describe-instances \
+                  --instance-ids $INSTANCE_ID \
+                  --query 'Reservations[0].Instances[0].NetworkInterfaces[0].NetworkInterfaceId' \
+                  --output text --region $REGION)
+              
+              aws ec2 create-traffic-mirror-target \
+                  --network-interface-id $target_eni \
+                  --description "Traffic mirroring target for packet analysis" \
+                  --region $REGION
+          }
+          
+          # Function to create intelligent traffic filter
+          create_intelligent_filter() {
+              local filter_name="intelligent-filter-$(date +%s)"
+              
+              aws ec2 create-traffic-mirror-filter \
+                  --description "Intelligent filter for performance analysis" \
+                  --region $REGION \
+                  --tag-specifications "ResourceType=traffic-mirror-filter,Tags=[{Key=Name,Value=$filter_name},{Key=Purpose,Value=PerformanceAnalysis}]"
+          }
+          
+          # Function to setup mirroring session
+          setup_mirroring_session() {
+              local source_eni=$1
+              local target_id=$2
+              local filter_id=$3
+              local session_number=$4
+              
+              aws ec2 create-traffic-mirror-session \
+                  --network-interface-id $source_eni \
+                  --traffic-mirror-target-id $target_id \
+                  --traffic-mirror-filter-id $filter_id \
+                  --session-number $session_number \
+                  --description "Performance analysis session for network flow monitoring" \
+                  --region $REGION
+          }
+          
+          # Log session management activities
+          echo "$(date): Traffic mirroring session management script initialized" | logger -t traffic-mirroring
+          EOF
+          
+          chmod +x /opt/traffic-mirroring/manage_sessions.sh
+          
+          # Create service monitoring script
+          cat > /opt/traffic-mirroring/monitor_service.sh << 'EOF'
+          #!/bin/bash
+          while true; do
+              if ! systemctl is-active --quiet trafficmirror-tcpdump.service; then
+                  echo "$(date): Traffic Mirror TCP Dump service is not running" | logger -t trafficmirror-monitor
+                  # Send CloudWatch metric
+                  aws cloudwatch put-metric-data \
+                      --namespace "TrafficMirroring/Health" \
+                      --metric-data MetricName=ServiceStatus,Value=0,Unit=Count \
+                      --region ${AWS::Region}
+              else
+                  # Send healthy status
+                  aws cloudwatch put-metric-data \
+                      --namespace "TrafficMirroring/Health" \
+                      --metric-data MetricName=ServiceStatus,Value=1,Unit=Count \
+                      --region ${AWS::Region}
+              fi
+              sleep 300  # Check every 5 minutes
+          done
+          EOF
+          
+          chmod +x /opt/traffic-mirroring/run_tcpdump.sh
+          chmod +x /opt/traffic-mirroring/monitor_service.sh
+          
+          # Enable and start services
+          systemctl enable trafficmirror-tcpdump
+          systemctl start trafficmirror-tcpdump
+          systemctl enable trafficmirror-svc-alerts
+          systemctl start trafficmirror-svc-alerts
+          systemctl enable amazon-ssm-agent
+          systemctl start amazon-ssm-agent
+          
+          echo "Traffic Mirroring Target setup complete"
+      Tags:
+        - Key: Name
+          Value: sample-app-TrafficMirroringTarget
+        - Key: Purpose
+          Value: PacketCapture
+        - Key: NetworkFlowMonitor
+          Value: enabled
+
+  # Packet Analysis Lambda Function
+  PacketAnalysisFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "sample-app-packet-analysis-${AWS::StackName}"
+      Runtime: python3.9
+      Handler: index.lambda_handler
+      Role: !GetAtt PacketAnalysisLambdaRole.Arn
+      Timeout: 300
+      MemorySize: 1024
+      Environment:
+        Variables:
+          S3_BUCKET: !Ref TrafficMirroringS3Bucket
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import subprocess
+          import os
+          from datetime import datetime
+          import tempfile
+          
+          def lambda_handler(event, context):
+              s3_client = boto3.client('s3')
+              cloudwatch = boto3.client('cloudwatch')
+              
+              analysis_results = []
+              
+              for record in event['Records']:
+                  bucket = record['s3']['bucket']['name']
+                  key = record['s3']['object']['key']
+                  
+                  print(f"Processing PCAP file: s3://{bucket}/{key}")
+                  
+                  # Download PCAP file to temporary location
+                  with tempfile.NamedTemporaryFile(suffix='.pcap', delete=False) as tmp_file:
+                      try:
+                          s3_client.download_file(bucket, key, tmp_file.name)
+                          
+                          # Analyze the PCAP file
+                          analysis_result = analyze_pcap_with_tshark(tmp_file.name, key)
+                          analysis_results.append(analysis_result)
+                          
+                          # Upload analysis results back to S3
+                          analysis_key = key.replace('.pcap', '-analysis.json')
+                          s3_client.put_object(
+                              Bucket=bucket,
+                              Key=analysis_key,
+                              Body=json.dumps(analysis_result, indent=2),
+                              ContentType='application/json'
+                          )
+                          
+                          # Send metrics to CloudWatch
+                          send_metrics_to_cloudwatch(analysis_result, cloudwatch)
+                          
+                          # Check for critical issues and send alerts
+                          if analysis_result.get('critical_issues'):
+                              send_performance_alert(analysis_result)
+                          
+                      finally:
+                          # Clean up temporary file
+                          if os.path.exists(tmp_file.name):
+                              os.unlink(tmp_file.name)
+              
+              return {
+                  'statusCode': 200,
+                  'body': json.dumps({
+                      'processed_files': len(analysis_results),
+                      'analysis_results': analysis_results
+                  })
+              }
+          
+          def analyze_pcap_with_tshark(pcap_file_path, s3_key):
+              analysis_result = {
+                  'file_path': s3_key,
+                  'analysis_timestamp': datetime.utcnow().isoformat(),
+                  'file_size_bytes': os.path.getsize(pcap_file_path),
+                  'tcp_analysis': {},
+                  'connection_analysis': {},
+                  'performance_metrics': {},
+                  'critical_issues': [],
+                  'recommendations': []
+              }
+              
+              try:
+                  # Basic packet count (simplified analysis for Lambda environment)
+                  stats_cmd = ['wc', '-c', pcap_file_path]
+                  stats_result = subprocess.run(stats_cmd, capture_output=True, text=True, timeout=30)
+                  
+                  file_size = int(stats_result.stdout.split()[0]) if stats_result.stdout.strip() else 0
+                  
+                  # Estimate packet count based on file size (rough approximation)
+                  estimated_packets = max(1, file_size // 64)  # Assume average 64 bytes per packet
+                  
+                  analysis_result['tcp_analysis'] = {
+                      'estimated_packets': estimated_packets,
+                      'file_size_bytes': file_size
+                  }
+                  
+                  analysis_result['performance_metrics'] = {
+                      'packets_per_second': estimated_packets / 900,  # 15-minute capture
+                      'bytes_per_second': file_size / 900
+                  }
+                  
+                  # Generate alerts based on file size (proxy for traffic volume)
+                  if file_size > 100 * 1024 * 1024:  # > 100MB
+                      analysis_result['critical_issues'].append({
+                          'type': 'high_traffic_volume',
+                          'severity': 'medium',
+                          'description': f'High traffic volume detected: {file_size / (1024*1024):.1f} MB',
+                          'recommendation': 'Monitor for potential network congestion'
+                      })
+                  
+                  if estimated_packets > 100000:  # > 100k packets in 15 minutes
+                      analysis_result['critical_issues'].append({
+                          'type': 'high_packet_rate',
+                          'severity': 'medium',
+                          'description': f'High packet rate detected: ~{estimated_packets} packets',
+                          'recommendation': 'Investigate traffic patterns and potential issues'
+                      })
+                  
+              except Exception as e:
+                  analysis_result['critical_issues'].append({
+                      'type': 'analysis_error',
+                      'severity': 'low',
+                      'description': f'Analysis error: {str(e)}',
+                      'recommendation': 'Check PCAP file integrity'
+                  })
+              
+              return analysis_result
+          
+          def send_metrics_to_cloudwatch(analysis_result, cloudwatch_client):
+              try:
+                  metrics = []
+                  
+                  tcp_analysis = analysis_result.get('tcp_analysis', {})
+                  performance_metrics = analysis_result.get('performance_metrics', {})
+                  
+                  if 'estimated_packets' in tcp_analysis:
+                      metrics.append({
+                          'MetricName': 'PacketCount',
+                          'Value': tcp_analysis['estimated_packets'],
+                          'Unit': 'Count',
+                          'Timestamp': datetime.utcnow()
+                      })
+                  
+                  if 'bytes_per_second' in performance_metrics:
+                      metrics.append({
+                          'MetricName': 'BytesPerSecond',
+                          'Value': performance_metrics['bytes_per_second'],
+                          'Unit': 'Bytes/Second',
+                          'Timestamp': datetime.utcnow()
+                      })
+                  
+                  if metrics:
+                      cloudwatch_client.put_metric_data(
+                          Namespace='TrafficMirroring/Performance',
+                          MetricData=metrics
+                      )
+                      
+              except Exception as e:
+                  print(f"Error sending metrics to CloudWatch: {e}")
+          
+          def send_performance_alert(analysis_result):
+              try:
+                  sns = boto3.client('sns')
+                  
+                  critical_issues = analysis_result.get('critical_issues', [])
+                  if not critical_issues:
+                      return
+                  
+                  alert_message = {
+                      'alert_type': 'traffic_mirroring_performance_issue',
+                      'timestamp': datetime.utcnow().isoformat(),
+                      'file_analyzed': analysis_result.get('file_path', 'unknown'),
+                      'critical_issues': critical_issues,
+                      'recommendations': analysis_result.get('recommendations', [])
+                  }
+                  
+                  topic_arn = os.environ.get('SNS_TOPIC_ARN')
+                  if topic_arn:
+                      sns.publish(
+                          TopicArn=topic_arn,
+                          Subject='Traffic Mirroring Performance Alert',
+                          Message=json.dumps(alert_message, indent=2)
+                      )
+                      
+              except Exception as e:
+                  print(f"Error sending performance alert: {e}")
+
+  # IAM Role for Packet Analysis Lambda
+  PacketAnalysisLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: PacketAnalysisS3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                Resource: !Sub "arn:aws:s3:::traffic-mirroring-analysis-${AWS::AccountId}/*"
+              - Effect: Allow
+                Action:
+                  - s3:ListBucket
+                Resource: !Sub "arn:aws:s3:::traffic-mirroring-analysis-${AWS::AccountId}"
+              - Effect: Allow
+                Action:
+                  - cloudwatch:PutMetricData
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - sns:Publish
+                Resource: !Ref TrafficMirroringAlertsTopic
+
+  # Lambda Permission for S3 to invoke Packet Analysis Function
+  PacketAnalysisLambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    DependsOn:
+      - PacketAnalysisFunction
+      - TrafficMirroringS3Bucket
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref PacketAnalysisFunction
+      Principal: s3.amazonaws.com
+      SourceArn: !GetAtt TrafficMirroringS3Bucket.Arn
+
+  # SNS Topic for Traffic Mirroring Alerts
+  TrafficMirroringAlertsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub "traffic-mirroring-alerts-${AWS::StackName}"
+      DisplayName: Traffic Mirroring Performance Alerts
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-TrafficMirroring-Alerts"
+        - Key: Purpose
+          Value: PerformanceMonitoring
+
+  # CloudWatch Dashboard for Traffic Mirroring
+  TrafficMirroringDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    DependsOn:
+      - PacketAnalysisFunction
+    Properties:
+      DashboardName: !Sub "TrafficMirroring-${AWS::StackName}"
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 0,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  ["TrafficMirroring/Performance", "PacketCount"],
+                  [".", "BytesPerSecond"],
+                  ["TrafficMirroring/Health", "ServiceStatus"]
+                ],
+                "period": 300,
+                "stat": "Average",
+                "region": "${AWS::Region}",
+                "title": "Traffic Mirroring Performance Metrics"
+              }
+            },
+            {
+              "type": "log",
+              "x": 0,
+              "y": 6,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "query": "SOURCE '/aws/lambda/${PacketAnalysisFunction}'\n| fields @timestamp, @message\n| filter @message like /critical_issues/\n| sort @timestamp desc\n| limit 20",
+                "region": "${AWS::Region}",
+                "title": "Critical Performance Issues",
+                "view": "table"
+              }
+            }
+          ]
+        }
+
+  # ==========================================
+  # CLOUDWATCH LOG GROUPS
+  # ==========================================
+  ImageAccessLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/s3/sample-app-image-access-logs
+      RetentionInDays: 30
+
+  HTMLRenderingLambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${HTMLRenderingFunction}"
+      RetentionInDays: 14
+
+  ImageProcessingLambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${ImageProcessingFunction}"
+      RetentionInDays: 14
+
+  UserInteractionLambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${UserInteractionFunction}"
+      RetentionInDays: 14
+
+  PacketAnalysisLambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${PacketAnalysisFunction}"
+      RetentionInDays: 14
+
+Outputs:
+  LoadBalancerDNS:
+    Description: DNS name of the Application Load Balancer
+    Value: !GetAtt ApplicationLoadBalancer.DNSName
+    Export:
+      Name: !Sub "${AWS::StackName}-ALB-DNS"
+
+  ImageBucketName:
+    Description: Name of the S3 bucket for image content
+    Value: !Ref ImageBucket
+    Export:
+      Name: !Sub "${AWS::StackName}-ImageBucket"
+
+  DatabaseEndpoint:
+    Description: RDS database endpoint
+    Value: !GetAtt ImageMetadataDatabase.Endpoint.Address
+    Export:
+      Name: !Sub "${AWS::StackName}-DB-Endpoint"
+
+  ReportingServerIP:
+    Description: Private IP of the reporting server
+    Value: !GetAtt ReportingServer.PrivateIp
+    Export:
+      Name: !Sub "${AWS::StackName}-ReportingServer-IP"
+
+  TransitGatewayId:
+    Description: Transit Gateway ID
+    Value: !Ref TransitGateway
+    Export:
+      Name: !Sub "${AWS::StackName}-TGW-ID"
+
+  HTMLRenderingFunctionArn:
+    Description: ARN of the HTML Rendering Lambda Function
+    Value: !GetAtt HTMLRenderingFunction.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-HTMLRenderer-ARN"
+
+  ImageProcessingFunctionArn:
+    Description: ARN of the Image Processing Lambda Function
+    Value: !GetAtt ImageProcessingFunction.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-ImageProcessor-ARN"
+
+  UserInteractionFunctionArn:
+    Description: ARN of the User Interaction Lambda Function
+    Value: !GetAtt UserInteractionFunction.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-UserInteraction-ARN"
+
+  # Traffic Mirroring Infrastructure Outputs
+  TrafficMirroringS3BucketName:
+    Description: Name of the S3 bucket for traffic mirroring storage
+    Value: !Ref TrafficMirroringS3Bucket
+    Export:
+      Name: !Sub "${AWS::StackName}-TrafficMirroring-S3Bucket"
+
+  TrafficMirroringTargetInstanceId:
+    Description: Instance ID of the traffic mirroring target
+    Value: !Ref TrafficMirroringTargetInstance
+    Export:
+      Name: !Sub "${AWS::StackName}-TrafficMirroring-Target-InstanceId"
+
+  TrafficMirroringTargetPrivateIP:
+    Description: Private IP of the traffic mirroring target instance
+    Value: !GetAtt TrafficMirroringTargetInstance.PrivateIp
+    Export:
+      Name: !Sub "${AWS::StackName}-TrafficMirroring-Target-IP"
+
+  PacketAnalysisFunctionArn:
+    Description: ARN of the Packet Analysis Lambda Function
+    Value: !GetAtt PacketAnalysisFunction.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-PacketAnalysis-ARN"
+
+  TrafficMirroringAlertsTopicArn:
+    Description: ARN of the SNS topic for traffic mirroring alerts
+    Value: !Ref TrafficMirroringAlertsTopic
+    Export:
+      Name: !Sub "${AWS::StackName}-TrafficMirroring-Alerts-Topic"
+
+  BastionInstanceId:
+    Description: Instance ID of the bastion host (primary traffic mirroring source)
+    Value: !Ref BastionEC2Instance
+    Export:
+      Name: !Sub "${AWS::StackName}-Bastion-InstanceId"
+
+  ReportingServerInstanceId:
+    Description: Instance ID of the reporting server (secondary traffic mirroring source)
+    Value: !Ref ReportingServer
+    Export:
+      Name: !Sub "${AWS::StackName}-ReportingServer-InstanceId"
+
+  TrafficMirroringDashboardURL:
+    Description: URL to the CloudWatch dashboard for traffic mirroring monitoring
+    Value: !Sub "https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name=TrafficMirroring-${AWS::StackName}"
+    Export:
+      Name: !Sub "${AWS::StackName}-TrafficMirroring-Dashboard-URL"
+
+  BastionInstanceIP:
+    Description: Private IP of the bastion host
+    Value: !GetAtt BastionEC2Instance.PrivateIp
+    Export:
+      Name: !Sub "${AWS::StackName}-Bastion-IP"
+
+  DatabaseName:
+    Description: Database name
+    Value: image_metadata
+    Export:
+      Name: !Sub "${AWS::StackName}-DB-Name"
+
+  DatabaseUsername:
+    Description: Database username
+    Value: !Ref DBUsername
+    Export:
+      Name: !Sub "${AWS::StackName}-DB-Username"
+
+  AppVPCId:
+    Description: App VPC ID
+    Value: !Ref AppVPC
+    Export:
+      Name: !Sub "${AWS::StackName}-App-VPC-ID"
+
+  ReportingVPCId:
+    Description: Reporting VPC ID
+    Value: !Ref ReportingVPC
+    Export:
+      Name: !Sub "${AWS::StackName}-Reporting-VPC-ID"
+
+  AppPrivateSubnet1Id:
+    Description: App Private Subnet 1 ID
+    Value: !Ref AppPrivateSubnet1
+    Export:
+      Name: !Sub "${AWS::StackName}-App-Private-Subnet1-ID"
+
+  AppPrivateSubnet2Id:
+    Description: App Private Subnet 2 ID
+    Value: !Ref AppPrivateSubnet2
+    Export:
+      Name: !Sub "${AWS::StackName}-App-Private-Subnet2-ID"
+
+  ReportingPrivateSubnetId:
+    Description: Reporting Private Subnet ID
+    Value: !Ref ReportingPrivateSubnet
+    Export:
+      Name: !Sub "${AWS::StackName}-Reporting-Private-Subnet-ID"
+
+  StackName:
+    Description: CloudFormation Stack Name
+    Value: !Ref AWS::StackName
+    Export:
+      Name: !Sub "${AWS::StackName}-Stack-Name"
+
+  Region:
+    Description: AWS Region
+    Value: !Ref AWS::Region
+    Export:
+      Name: !Sub "${AWS::StackName}-Region"

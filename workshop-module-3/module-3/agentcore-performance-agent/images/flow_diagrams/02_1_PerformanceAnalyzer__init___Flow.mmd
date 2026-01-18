@@ -1,0 +1,6 @@
+graph TD
+    A[__init__(region='us-east-1')] --> B[Initialize EC2 Client]
+    B --> C[Initialize CloudWatch Client]
+    C --> D[Initialize CloudWatch Logs Client]
+    D --> E[Store Region]
+    E --> F[Ready for Analysis Operations]

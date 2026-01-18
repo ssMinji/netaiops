@@ -1,0 +1,46 @@
+default_agent: a2a_performance_agent_runtime
+agents:
+  a2a_performance_agent_runtime:
+    name: a2a_performance_agent_runtime
+    entrypoint: /local/home/aksareen/2025/code.aws.dev/module-3/agentcore-performance-agent/main.py
+    platform: linux/arm64
+    container_runtime: docker
+    source_path: /local/home/aksareen/2025/code.aws.dev/module-3/agentcore-performance-agent
+    aws:
+      execution_role: arn:aws:iam::104398007905:role/performance-gateway-execution-role
+      execution_role_auto_create: true
+      account: '104398007905'
+      region: us-east-1
+      ecr_repository: 104398007905.dkr.ecr.us-east-1.amazonaws.com/bedrock-agentcore-a2a_performance_agent_runtime
+      ecr_auto_create: false
+      network_configuration:
+        network_mode: PUBLIC
+        network_mode_config: null
+      protocol_configuration:
+        server_protocol: HTTP
+      observability:
+        enabled: true
+    bedrock_agentcore:
+      agent_id: a2a_performance_agent_runtime-lIbJHD3rD6
+      agent_arn: arn:aws:bedrock-agentcore:us-east-1:104398007905:runtime/a2a_performance_agent_runtime-lIbJHD3rD6
+      agent_session_id: null
+    codebuild:
+      project_name: bedrock-agentcore-a2a_performance_agent_runtime-builder
+      execution_role: arn:aws:iam::104398007905:role/AmazonBedrockAgentCoreSDKCodeBuild-us-east-1-b64e869c3d
+      source_bucket: bedrock-agentcore-codebuild-sources-104398007905-us-east-1
+    memory:
+      mode: STM_ONLY
+      memory_id: a2a_performance_agent_runtime_mem-05MeqL5b5p
+      memory_arn: arn:aws:bedrock-agentcore:us-east-1:104398007905:memory/a2a_performance_agent_runtime_mem-05MeqL5b5p
+      memory_name: a2a_performance_agent_runtime_mem
+      event_expiry_days: 30
+      first_invoke_memory_check_done: false
+      was_created_by_toolkit: false
+    authorizer_configuration:
+      customJWTAuthorizer:
+        discoveryUrl: https://cognito-idp.us-east-1.amazonaws.com/us-east-1_NSfrtr3e1/.well-known/openid-configuration
+        allowedClients:
+        - 6pngiupetf9ipjgq7o0dmq2pm7
+        - k8dgn2e038vs36ogbqae1u3e9
+    request_header_configuration: null
+    oauth_configuration: null

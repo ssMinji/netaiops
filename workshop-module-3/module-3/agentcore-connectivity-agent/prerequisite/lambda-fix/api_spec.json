@@ -1,0 +1,40 @@
+[
+    {
+        "name": "connectivity", 
+        "description": "Analyzes network paths between AWS resources using VPC Reachability Analyzer and can automatically fix issues by applying security group rules. Supports both EC2 instance IDs and IP addresses. Use dns-resolve tool first if working with DNS names.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Natural language query describing the connectivity analysis or fix request"
+                },
+                "source_resource": {
+                    "type": "string", 
+                    "description": "Source resource identifier (EC2 instance ID like i-1234567890abcdef0 or IP address like 10.0.1.100)"
+                },
+                "destination_resource": {
+                    "type": "string",
+                    "description": "Destination resource identifier (EC2 instance ID like i-0987654321fedcba0 or IP address like 10.0.2.200)"
+                },
+                "protocol": {
+                    "type": "string",
+                    "description": "Protocol to analyze (TCP, UDP, ICMP)"
+                },
+                "port": {
+                    "type": "string", 
+                    "description": "Port number for the analysis (e.g., 80, 443, 22, 3306)"
+                },
+                "action": {
+                    "type": "string",
+                    "description": "Action to perform: 'check' to analyze connectivity only, 'fix' to analyze and apply fixes if issues found (requires user consent)"
+                },
+                "session_id": {
+                    "type": "string",
+                    "description": "Session ID for agent memory tracking (optional)"
+                }
+            },
+            "required": ["source_resource", "destination_resource"]
+        }
+    }
+]

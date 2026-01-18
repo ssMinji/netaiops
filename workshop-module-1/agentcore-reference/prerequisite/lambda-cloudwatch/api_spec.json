@@ -1,0 +1,73 @@
+[
+    {
+        "name": "cloudwatch-monitoring",
+        "description": "Comprehensive CloudWatch monitoring tool for alarms, metrics, and logs analysis. Supports alarm management, metric data retrieval, and log querying for AWS resources troubleshooting.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Natural language query describing the CloudWatch operation needed"
+                },
+                "operation": {
+                    "type": "string",
+                    "description": "CloudWatch operation to perform (describe_alarms, get_metric_data, query_logs, list_log_groups, get_log_events, create_alarm, delete_alarm)"
+                },
+                "alarm_names": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "List of alarm names for alarm operations"
+                },
+                "metric_name": {
+                    "type": "string",
+                    "description": "CloudWatch metric name (e.g., CPUUtilization, NetworkIn)"
+                },
+                "namespace": {
+                    "type": "string",
+                    "description": "CloudWatch namespace (e.g., AWS/EC2, AWS/RDS, AWS/Lambda)"
+                },
+                "dimensions": {
+                    "type": "object",
+                    "description": "Metric dimensions as key-value pairs (e.g., {\"InstanceId\": \"i-1234567890abcdef0\"})"
+                },
+                "start_time": {
+                    "type": "string",
+                    "description": "Start time for metric/log queries (ISO format or relative like '1h', '24h')"
+                },
+                "end_time": {
+                    "type": "string",
+                    "description": "End time for metric/log queries (ISO format or relative like 'now')"
+                },
+                "log_group_name": {
+                    "type": "string",
+                    "description": "CloudWatch Logs group name for log operations"
+                },
+                "log_stream_name": {
+                    "type": "string",
+                    "description": "CloudWatch Logs stream name for specific log stream operations"
+                },
+                "filter_pattern": {
+                    "type": "string",
+                    "description": "CloudWatch Logs filter pattern for log queries"
+                },
+                "statistic": {
+                    "type": "string",
+                    "description": "Metric statistic (Average, Sum, Maximum, Minimum, SampleCount)"
+                },
+                "period": {
+                    "type": "integer",
+                    "description": "Metric period in seconds (60, 300, 3600, etc.)"
+                },
+                "threshold": {
+                    "type": "number",
+                    "description": "Alarm threshold value for create_alarm operation"
+                },
+                "comparison_operator": {
+                    "type": "string",
+                    "description": "Alarm comparison operator (GreaterThanThreshold, GreaterThanOrEqualToThreshold, LessThanThreshold, LessThanOrEqualToThreshold)"
+                }
+            },
+            "required": ["operation"]
+        }
+    }
+]

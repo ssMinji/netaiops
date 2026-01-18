@@ -1,0 +1,72 @@
+[
+    {
+        "name": "analyze_network_flow_monitor",
+        "description": "Analyze all Network Flow Monitors in a region and AWS account to get network health indicators, traffic summary data, and monitor details including local and remote resources",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "region": {
+                    "type": "string",
+                    "description": "AWS region to analyze (defaults to us-east-1 if not specified)"
+                },
+                "account_id": {
+                    "type": "string",
+                    "description": "AWS account ID to analyze (uses current account if not specified)"
+                }
+            },
+            "required": ["region", "account_id"]
+        }
+    },
+    {
+        "name": "analyze_traffic_mirroring_logs",
+        "description": "Extract and analyze all PCAP files from the traffic mirroring S3 bucket using deep tshark analysis on TrafficMirroringTargetInstance to identify TCP retransmissions, connection issues, performance statistics, and high latency problems",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "s3_bucket_name": {
+                    "type": "string",
+                    "description": "S3 bucket name containing PCAP files (auto-detected if not provided)"
+                },
+                "prefix": {
+                    "type": "string",
+                    "description": "S3 prefix/folder path for PCAP files (defaults to 'raw-captures/' if not specified)"
+                },
+                "max_files": {
+                    "type": "integer",
+                    "description": "Maximum number of PCAP files to analyze (defaults to 100, valid range: 1-1000)"
+                },
+                "analyze_content": {
+                    "type": "boolean",
+                    "description": "Whether to perform deep PCAP analysis using tshark on TrafficMirroringTargetInstance (defaults to true for comprehensive analysis including TCP retransmissions, connection issues, performance stats, and latency)"
+                },
+                "target_instance_id": {
+                    "type": "string",
+                    "description": "EC2 instance ID of TrafficMirroringTargetInstance for tshark analysis (auto-detected if not provided)"
+                }
+            },
+            "required": []
+        }
+    },
+    {
+        "name": "fix_retransmissions",
+        "description": "Fix TCP retransmission issues by restoring optimal TCP settings and removing network impairment (packet loss and delay via tc qdisc). This tool fixes issues caused by small TCP buffer sizes, disabled TCP window scaling, aggressive retransmission timeouts, and network impairment. Automatically detects bastion server from CloudFormation stack if instance_id not provided.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "instance_id": {
+                    "type": "string",
+                    "description": "EC2 instance ID to fix TCP retransmission issues on (optional - auto-detects bastion server from CloudFormation stack if not provided)"
+                },
+                "stack_name": {
+                    "type": "string",
+                    "description": "CloudFormation stack name to find bastion server (defaults to 'acme-image-gallery-perf' if not specified)"
+                },
+                "region": {
+                    "type": "string",
+                    "description": "AWS region where instance is located (defaults to us-east-1 if not specified)"
+                }
+            },
+            "required": []
+        }
+    }
+]

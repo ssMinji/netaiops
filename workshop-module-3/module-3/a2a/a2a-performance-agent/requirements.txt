@@ -1,0 +1,26 @@
+# Core A2A Server Dependencies
+strands-agents[a2a]>=0.1.0
+strands-agents-tools[a2a_client]>=0.1.0
+
+# HTTP and async support for FastAPI/A2AServer
+httpx[http2]>=0.25.0
+uvicorn>=0.23.0
+fastapi>=0.104.0
+starlette>=0.27.0
+
+# AWS SDK (keep for any remaining AWS integrations)
+boto3>=1.39.7
+botocore
+
+# Core utilities
+pydantic>=2.0.0
+python-dotenv>=1.0.0
+python-dateutil>=2.8.2
+requests>=2.31.0
+pyyaml>=6.0
+
+# Logging and monitoring (recommended)
+rich>=13.0.0
+
+bedrock-agentcore
+bedrock-agentcore-starter-toolkit

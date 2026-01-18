@@ -1,0 +1,36 @@
+[
+    {
+        "name": "connectivity-fix", 
+        "description": "Automatically fix connectivity issues by applying least permissive security group rules using /32 instance CIDRs. Validates fixes by re-running VPC Reachability Analyzer.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Natural language description of the connectivity fix request"
+                },
+                "source_resource": {
+                    "type": "string", 
+                    "description": "Source EC2 instance ID (e.g., i-1234567890abcdef0)"
+                },
+                "destination_resource": {
+                    "type": "string",
+                    "description": "Destination EC2 instance ID (e.g., i-0987654321fedcba0)"
+                },
+                "protocol": {
+                    "type": "string",
+                    "description": "Network protocol for the connectivity fix (TCP, UDP, ICMP)"
+                },
+                "port": {
+                    "type": "string", 
+                    "description": "Port number for TCP/UDP protocols (e.g., 80, 443, 22)"
+                },
+                "session_id": {
+                    "type": "string",
+                    "description": "Session ID for agent memory tracking (optional)"
+                }
+            },
+            "required": ["query", "source_resource", "destination_resource"]
+        }
+    }
+]

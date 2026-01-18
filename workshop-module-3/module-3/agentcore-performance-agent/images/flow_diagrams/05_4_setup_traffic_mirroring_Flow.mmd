@@ -1,0 +1,46 @@
+graph TD
+    A[setup_traffic_mirroring] --> B{filter_criteria is string?}
+    B -->|Yes| C[Parse JSON filter_criteria]
+    B -->|No| D[Use provided filter_criteria]
+    C --> E{session_number provided?}
+    D --> E
+    E -->|No| F[Generate session_number]
+    E -->|Yes| G[Get Network Interface IDs]
+    F --> G
+    G --> H[get_network_interface_id for source]
+    H --> I[get_network_interface_id for target]
+    I --> J[Create Traffic Mirror Target]
+    J --> K{filter_criteria provided?}
+    K -->|No| L[Create Default Filter]
+    K -->|Yes| M[Create Traffic Mirror Filter]
+    L --> M
+    M --> N[Add Filter Rules]
+    N --> O[Create Traffic Mirror Session]
+    O --> P{enable_s3_flow_logs?}
+    P -->|Yes| Q[Setup S3 Flow Logs]
+    P -->|No| R[Skip S3 Setup]
+    Q --> S[Setup Packet Capture on Target]
+    R --> S
+    S --> T[Return Complete Configuration]
+    
+    subgraph "Helper Functions"
+        U[get_network_interface_id]
+        V[_setup_packet_capture_on_target]
+    end
+    
+    subgraph "AWS Services Used"
+        W[EC2 describe_instances]
+        X[EC2 create_traffic_mirror_target]
+        Y[EC2 create_traffic_mirror_filter]
+        Z[EC2 create_traffic_mirror_session]
+        AA[EC2 create_flow_logs]
+    end
+    
+    H --> U
+    I --> U
+    U --> W
+    J --> X
+    M --> Y
+    O --> Z
+    Q --> AA
+    S --> V

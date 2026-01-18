@@ -1,0 +1,8 @@
+model_information:
+  model_id: us.anthropic.claude-3-7-sonnet-20250219-v1:0
+  agent_name: Host_Agent
+  description: This Host agent orchestrates requests for performance, and connectivity
+    troubleshooting systems
+servers:
+- http://a2a-connectivity-alb-835581212.us-east-1.elb.amazonaws.com
+- http://a2a-performance-alb-526352452.us-east-1.elb.amazonaws.com

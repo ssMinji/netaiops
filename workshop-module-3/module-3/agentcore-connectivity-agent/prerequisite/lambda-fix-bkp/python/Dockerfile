@@ -1,0 +1,14 @@
+# Use the official AWS Lambda Python runtime
+FROM amazon/aws-lambda-python:3.11
+
+# Copy requirements and install Python dependencies
+COPY requirements.txt ${LAMBDA_TASK_ROOT}
+
+# Install Python packages
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy function code
+COPY lambda_function.py ${LAMBDA_TASK_ROOT}
+
+# Set the CMD to your handler (could also be done as a parameter override outside of the Dockerfile)
+CMD [ "lambda_function.lambda_handler" ]

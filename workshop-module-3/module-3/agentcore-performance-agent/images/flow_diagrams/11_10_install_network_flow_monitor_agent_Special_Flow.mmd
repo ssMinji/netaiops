@@ -1,0 +1,33 @@
+graph TD
+    A[install_network_flow_monitor_agent] --> B[Import Chain Modules]
+    B --> C{Import successful?}
+    C -->|No| D[Return Import Error]
+    C -->|Yes| E[Set 30-second Timeout]
+    E --> F[Validate EC2 Instance]
+    F --> G{Instance valid & running?}
+    G -->|No| H[Return Validation Error]
+    G -->|Yes| I[Start Async Chain Processing]
+    I --> J[Return Immediate Response]
+    
+    subgraph "Chain of Responsibility"
+        K[InstallNetworkFlowMonitorHandler]
+        L[GetEC2NetworkInformationHandler]
+        M[CreateNetworkFlowMonitorVpcLevelHandler]
+        N[CreateNetworkFlowMonitorSubnetLevelHandler]
+        O[CreateNetworkFlowMonitorAZLevelHandler]
+    end
+    
+    subgraph "Async Processing"
+        P[Background Thread]
+        Q[Chain Execution]
+        R[Handler Sequence]
+    end
+    
+    I --> P
+    P --> Q
+    Q --> R
+    R --> K
+    K --> L
+    L --> M
+    M --> N
+    N --> O

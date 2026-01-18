@@ -1,0 +1,52 @@
+graph LR
+    subgraph "Input Data"
+        A[VPC ID, Subnet ID, Instance IDs]
+        B[Time Ranges, Filters]
+        C[S3 Bucket Names, Regions]
+    end
+    
+    subgraph "Processing Functions"
+        D[analyze_vpc_flow_metrics]
+        E[create_subnet_flow_monitor]
+        F[setup_traffic_mirroring]
+        G[analyze_tcp_performance]
+        H[analyze_captured_traffic_data]
+    end
+    
+    subgraph "AWS Services"
+        I[CloudWatch Metrics]
+        J[VPC Flow Logs]
+        K[Traffic Mirroring]
+        L[EC2 Instances]
+        M[S3 Storage]
+        N[Systems Manager]
+    end
+    
+    subgraph "Output Data"
+        O[Analysis Results]
+        P[Configuration Status]
+        Q[Performance Metrics]
+        R[PCAP Analysis]
+        S[Recommendations]
+    end
+    
+    A --> D
+    A --> E
+    A --> F
+    B --> G
+    C --> H
+    
+    D --> I
+    E --> J
+    F --> K
+    F --> L
+    G --> J
+    H --> M
+    H --> N
+    
+    I --> O
+    J --> P
+    K --> Q
+    L --> R
+    M --> S
+    N --> S

@@ -1,0 +1,656 @@
+AWSTemplateFormatVersion: '2010-09-09'
+# ============================================================================
+# Performance Agent 시스템 - Cognito 인증
+# 이 템플릿은 A2A Performance Agent를 위한 Cognito 사용자 풀 및 클라이언트를 생성합니다.
+# 포함 리소스: Cognito User Pool, App Client, IAM 역할
+# 배포 순서: 2b단계 (sample-application 이후, 독립적으로 배포 가능)
+# ============================================================================
+Description: 'CloudFormation template for Performance Agent System with Cognito authentication'
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: Cognito Configuration
+        Parameters:
+          - UserPoolName
+          - MachineAppClientName
+          - WebAppClientName
+
+Parameters:
+
+  UserPoolName:
+    Type: String
+    Default: 'PerformancePool'
+    Description: 'Name of the Cognito User Pool'
+  
+  MachineAppClientName:
+    Type: String
+    Default: 'PerformanceMachineClient'
+    Description: 'Name of the Cognito User Pool Application Client'
+  
+  WebAppClientName:
+    Type: String
+    Default: 'PerformanceWebClient'
+    Description: 'Name of the Cognito User Pool Web Application Client'
+
+Resources:
+
+  # IAM Role for Cognito to send SMS messages
+  CognitoSMSRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cognito-idp.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CognitoSMSPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sns:Publish
+                Resource: '*'
+
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Ref UserPoolName
+      MfaConfiguration: 'OPTIONAL'
+      UsernameConfiguration:
+        CaseSensitive: false
+      UsernameAttributes:
+        - email
+      AutoVerifiedAttributes:
+        - email
+      SmsConfiguration:
+        ExternalId: 'PerformanceAgent'
+        SnsCallerArn: !GetAtt CognitoSMSRole.Arn
+      EnabledMfas:
+        - SMS_MFA
+
+  AdminGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      GroupName: admin
+      Description: Administrator group
+      UserPoolId: !Ref UserPool
+      Precedence: 1
+
+  UserGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      GroupName: user
+      Description: Regular user group
+      UserPoolId: !Ref UserPool
+      Precedence: 2
+
+  WebUserPoolClient:
+    DependsOn: ResourceServer
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Ref WebAppClientName
+      UserPoolId: !Ref UserPool
+      GenerateSecret: false
+      AllowedOAuthFlows:
+        - code
+      AllowedOAuthScopes:
+        - openid
+        - email
+        - profile
+        - !Join
+            - ''
+            - - 'netops-a2a-server-'
+              - !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]]
+              - '/gateway:read'
+        - !Join
+            - ''
+            - - 'netops-a2a-server-'
+              - !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]]
+              - '/gateway:write'
+      AllowedOAuthFlowsUserPoolClient: true
+      CallbackURLs:
+        - http://localhost:8501/
+        - https://example.com/auth/callback
+      LogoutURLs:
+        - http://localhost:8501/
+      SupportedIdentityProviders:
+        - COGNITO
+      AccessTokenValidity: 60
+      IdTokenValidity: 60
+      RefreshTokenValidity: 30
+      TokenValidityUnits:
+        AccessToken: minutes
+        IdToken: minutes
+        RefreshToken: days
+      EnableTokenRevocation: true
+
+  MachineUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    DependsOn: ResourceServer
+    Properties:
+      ClientName: !Ref MachineAppClientName
+      UserPoolId: !Ref UserPool
+      GenerateSecret: true
+      ExplicitAuthFlows:
+        - ALLOW_REFRESH_TOKEN_AUTH
+      RefreshTokenValidity: 1
+      AccessTokenValidity: 60
+      IdTokenValidity: 60
+      TokenValidityUnits:
+        AccessToken: minutes
+        IdToken: minutes
+        RefreshToken: days
+      AllowedOAuthFlows:
+        - client_credentials
+      AllowedOAuthScopes:
+        - !Join
+          - ''
+          - - 'netops-a2a-server-'
+            - !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]]
+            - '/gateway:read'
+        - !Join
+          - ''
+          - - 'netops-a2a-server-'
+            - !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]]
+            - '/gateway:write'
+      AllowedOAuthFlowsUserPoolClient: true
+      SupportedIdentityProviders:
+        - COGNITO
+      EnableTokenRevocation: true
+  
+  ResourceServer:
+    Type: AWS::Cognito::UserPoolResourceServer
+    Properties:
+      UserPoolId: !Ref UserPool
+      Identifier: !Join
+        - '-'
+        - - 'netops-a2a-server'
+          - !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]]
+      Name: !Join
+        - '-'
+        - - 'NetOps A2A Server '
+          - !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]]
+      Scopes:
+        - ScopeName: 'gateway:read'
+          ScopeDescription: 'Read access'
+        - ScopeName: 'gateway:write'
+          ScopeDescription: 'Write access'
+        - ScopeName: 'invoke'
+          ScopeDescription: 'Invoke NetOps agent runtime'
+  
+  UserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      UserPoolId: !Ref UserPool
+      Domain: !Join
+        - ''
+        - - 'performance-'
+          - !Ref 'AWS::AccountId'
+          - '-'
+          - !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]]
+
+  # SSM Parameters - EXACTLY like reference implementation
+  CognitoMachineClientIdParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /a2a/app/performance/agentcore/machine_client_id
+      Type: String
+      Value: !Ref MachineUserPoolClient
+      Description: Machine Cognito client ID
+      Tags:
+        Application: NetOps
+  
+  CognitoWebClientIdParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /a2a/app/performance/agentcore/web_client_id
+      Type: String
+      Value: !Ref WebUserPoolClient
+      Description: Cognito client ID for web app
+      Tags:
+        Application: NetOps
+
+  UserPoolIdParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /a2a/app/performance/agentcore/userpool_id
+      Type: String
+      Value: !Ref UserPool
+      Description: Cognito User Pool ID
+      Tags:
+        Application: NetOps
+
+  CognitoProviderParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /a2a/app/performance/agentcore/cognito_provider
+      Type: String
+      Value: !Join
+        - ''
+        - - 'a2a-performance-'
+          - !Ref 'AWS::AccountId'
+          - '-'
+          - !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]]
+      Description: Cognito provider name for BedrockAgentCore
+      Tags:
+        Application: NetOps
+
+  CognitoAuthScopeParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /a2a/app/performance/agentcore/cognito_auth_scope
+      Type: String
+      Value: !Join
+        - ' '
+        - - !Join
+            - ''
+            - - 'netops-a2a-server-'
+              - !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]]
+              - '/gateway:read'
+          - !Join
+            - ''
+            - - 'netops-a2a-server-'
+              - !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]]
+              - '/gateway:write'
+      Description: OAuth2 scope for Cognito auth (machine client scopes)
+      Tags:
+        Application: NetOps
+
+  CognitoDiscoveryURLParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /a2a/app/performance/agentcore/cognito_discovery_url
+      Type: String
+      Value: !Sub 'https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPool}/.well-known/openid-configuration'
+      Description: OAuth2 Discovery URL
+      Tags:
+        Application: NetOps
+
+  CognitoTokenURLParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /a2a/app/performance/agentcore/cognito_token_url
+      Type: String
+      Value: !Join
+        - ''
+        - - !Sub 'https://performance-${AWS::AccountId}-'
+          - !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]]
+          - !Sub '.auth.${AWS::Region}.amazoncognito.com/oauth2/token'
+      Description: OAuth2 Token URL
+      Tags:
+        Application: NetOps
+
+  CognitoAuthorizeURLParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /a2a/app/performance/agentcore/cognito_auth_url
+      Type: String
+      Value: !Join
+        - ''
+        - - !Sub 'https://performance-${AWS::AccountId}-'
+          - !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]]
+          - !Sub '.auth.${AWS::Region}.amazoncognito.com/oauth2/authorize'
+      Description: OAuth2 Authorization URL
+      Tags:
+        Application: NetOps
+
+  CognitoDomainParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /a2a/app/performance/agentcore/cognito_domain
+      Type: String
+      Value: !Join
+        - ''
+        - - !Sub 'https://performance-${AWS::AccountId}-'
+          - !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]]
+          - !Sub '.auth.${AWS::Region}.amazoncognito.com'
+      Description: Cognito hosted domain for OAuth2
+      Tags:
+        Application: NetOps
+
+  # AgentCore Execution Role with ECR permissions (Reference Implementation)
+  AgentCoreExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: 'performance-gateway-execution-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: 
+                - bedrock-agentcore.amazonaws.com
+                - lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: BedrockAgentCoreExecutionPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # ECR permissions for container runtime
+              - Effect: Allow
+                Action:
+                  - ecr:GetAuthorizationToken
+                  - ecr:BatchGetImage
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchCheckLayerAvailability
+                Resource: '*'
+              # BedrockAgentCore permissions (both control plane and runtime)
+              - Effect: Allow
+                Action:
+                  - bedrock-agentcore-control:CreateOAuth2CredentialProvider
+                  - bedrock-agentcore-control:DeleteOAuth2CredentialProvider
+                  - bedrock-agentcore-control:GetOAuth2CredentialProvider
+                  - bedrock-agentcore-control:ListOAuth2CredentialProviders
+                  - bedrock-agentcore-control:UpdateOAuth2CredentialProvider
+                  - bedrock-agentcore-control:CreateGateway
+                  - bedrock-agentcore-control:DeleteGateway
+                  - bedrock-agentcore-control:GetGateway
+                  - bedrock-agentcore-control:ListGateways
+                  - bedrock-agentcore-control:UpdateGateway
+                  - bedrock-agentcore-control:CreateRuntime
+                  - bedrock-agentcore-control:DeleteRuntime
+                  - bedrock-agentcore-control:GetRuntime
+                  - bedrock-agentcore-control:ListRuntimes
+                  - bedrock-agentcore-control:UpdateRuntime
+                  - bedrock-agentcore:InvokeRuntime
+                  - bedrock-agentcore:GetResourceOauth2Token
+                  - bedrock-agentcore:CreateMemory
+                  - bedrock-agentcore:DeleteMemory
+                  - bedrock-agentcore:GetMemory
+                  - bedrock-agentcore:ListMemories
+                  - bedrock-agentcore:UpdateMemory
+                  - bedrock-agentcore:RetrieveMemoryRecords
+                  - bedrock-agentcore:StoreMemoryRecords
+                Resource: '*'
+              # Lambda permissions for MCP tools (more specific)
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                  - lambda:GetFunction
+                  - lambda:ListFunctions
+                Resource: 
+                  - !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:performance-*'
+              # Additional permissions for agent operations
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                  - ssm:GetParameter
+                  - ssm:GetParameters
+                  - ssm:GetParametersByPath
+                  - bedrock-agentcore:GetWorkloadAccessTokenForJWT
+                  - bedrock-agentcore:InvokeAgent
+                  - bedrock-agentcore:RetrieveAndGenerate
+                  - aws-marketplace:Subscribe
+                  - aws-marketplace:Unsubscribe
+                  - aws-marketplace:ViewSubscriptions
+                Resource: '*'
+              # EC2 permissions for Performance Analytics and Network Monitoring
+              - Effect: Allow
+                Action:
+                  - ec2:DescribeInstances
+                  - ec2:DescribeSecurityGroups
+                  - ec2:DescribeNetworkAcls
+                  - ec2:DescribeRouteTables
+                  - ec2:DescribeVpcs
+                  - ec2:DescribeSubnets
+                  - ec2:DescribeNetworkInterfaces
+                  - ec2:CreateNetworkInsightsPath
+                  - ec2:StartNetworkInsightsAnalysis
+                  - ec2:DescribeNetworkInsightsAnalyses
+                  - ec2:DescribeNetworkInsightsPaths
+                  - ec2:DeleteNetworkInsightsPath
+                  - ec2:AuthorizeSecurityGroupIngress
+                  - ec2:AuthorizeSecurityGroupEgress
+                  - ec2:RevokeSecurityGroupIngress
+                  - ec2:RevokeSecurityGroupEgress
+                  - ec2:CreateSecurityGroup
+                  - ec2:DeleteSecurityGroup
+                  - ec2:ModifyNetworkInterfaceAttribute
+                  - ec2:DescribeFlowLogs
+                  - ec2:CreateFlowLogs
+                  - ec2:DeleteFlowLogs
+                  - ec2:CreateTrafficMirrorTarget
+                  - ec2:CreateTrafficMirrorFilter
+                  - ec2:CreateTrafficMirrorFilterRule
+                  - ec2:CreateTrafficMirrorSession
+                  - ec2:DeleteTrafficMirrorTarget
+                  - ec2:DeleteTrafficMirrorFilter
+                  - ec2:DeleteTrafficMirrorSession
+                  - ec2:DescribeTrafficMirrorTargets
+                  - ec2:DescribeTrafficMirrorFilters
+                  - ec2:DescribeTrafficMirrorSessions
+                  - ec2:DescribeAvailabilityZones
+                  - ec2:DescribeRegions
+                Resource: '*'
+              # Route 53 permissions for DNS resolution
+              - Effect: Allow
+                Action:
+                  - route53:ListHostedZones
+                  - route53:ListResourceRecordSets
+                  - route53:GetHostedZone
+                Resource: '*'
+              # SSM permissions for runtime configuration access (both paths)
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                  - ssm:GetParameters
+                  - ssm:GetParametersByPath
+                  - ssm:PutParameter
+                Resource: 
+                  - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/app/netops/*'
+                  - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/a2a/app/performance/*'
+              # CloudWatch Logs permissions for debugging
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - logs:DescribeLogGroups
+                  - logs:DescribeLogStreams
+                  - logs:TagResource
+                  - logs:UntagResource
+                  - logs:ListTagsLogGroup
+                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*'
+              # IAM permissions for role operations (needed for some AgentCore operations)
+              - Effect: Allow
+                Action:
+                  - iam:GetRole
+                  - iam:PassRole
+                  - iam:ListAttachedRolePolicies
+                  - iam:ListRolePolicies
+                  - iam:GetRolePolicy
+                Resource: !Sub 'arn:aws:iam::${AWS::AccountId}:role/performance-gateway-execution-role'
+              # Service-linked role creation (commonly needed for AWS services)
+              - Effect: Allow
+                Action:
+                  - iam:CreateServiceLinkedRole
+                Resource: 
+                  - !Sub 'arn:aws:iam::${AWS::AccountId}:role/aws-service-role/*'
+              # X-Ray permissions for distributed tracing
+              - Effect: Allow
+                Action:
+                  - xray:PutTraceSegments
+                  - xray:PutTelemetryRecords
+                  - xray:GetSamplingRules
+                  - xray:GetSamplingTargets
+                Resource: '*'
+              # Memory service permissions for BedrockAgentCore (least privilege)
+              - Effect: Allow
+                Action:
+                  - bedrock-agentcore-memory:CreateMemory
+                  - bedrock-agentcore-memory:DeleteMemory
+                  - bedrock-agentcore-memory:GetMemory
+                  - bedrock-agentcore-memory:ListMemories
+                  - bedrock-agentcore-memory:UpdateMemory
+                  - bedrock-agentcore-memory:PutMemoryData
+                  - bedrock-agentcore-memory:GetMemoryData
+                  - bedrock-agentcore-memory:DeleteMemoryData
+                  - bedrock-agentcore:CreateEvent
+                  - bedrock-agentcore:GetEvent
+                  - bedrock-agentcore:ListEvents
+                  - bedrock-agentcore:DeleteEvent
+                Resource: 
+                  - !Sub 'arn:aws:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:memory/*'
+              # Additional EC2 permissions commonly needed
+              - Effect: Allow
+                Action:
+                  - ec2:CreateTags
+                  - ec2:DeleteTags
+                  - ec2:DescribeTags
+                  - ec2:CreateNetworkInsightsAccessScope
+                  - ec2:DeleteNetworkInsightsAccessScope
+                  - ec2:DescribeNetworkInsightsAccessScopes
+                Resource: '*'
+              # VPC Reachability Analyzer service permissions
+              - Effect: Allow
+                Action:
+                  - tiros:CreateQuery
+                  - tiros:GetQueryAnswer
+                  - tiros:GetQueryExplanation
+                Resource: '*'
+              # Secrets Manager permissions for OAuth2 tokens and secure storage
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                  - secretsmanager:DescribeSecret
+                  - secretsmanager:ListSecrets
+                Resource: 
+                  - !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:*'
+              # KMS permissions for decrypting secrets
+              - Effect: Allow
+                Action:
+                  - kms:Decrypt
+                  - kms:DescribeKey
+                  - kms:GenerateDataKey
+                Resource: 
+                  - !Sub 'arn:aws:kms:${AWS::Region}:${AWS::AccountId}:key/*'
+              # Network Flow Monitor permissions (critical for performance monitoring)
+              - Effect: Allow
+                Action:
+                  - networkflowmonitor:CreateMonitor
+                  - networkflowmonitor:DeleteMonitor
+                  - networkflowmonitor:GetMonitor
+                  - networkflowmonitor:ListMonitors
+                  - networkflowmonitor:UpdateMonitor
+                  - networkflowmonitor:TagResource
+                  - networkflowmonitor:UntagResource
+                  - networkflowmonitor:ListTagsForResource
+                  - networkflowmonitor:GetQueryResultsMonitorTopContributors
+                  - networkflowmonitor:GetQueryStatusMonitorTopContributors
+                  - networkflowmonitor:StartQueryMonitorTopContributors
+                  - networkflowmonitor:StopQueryMonitorTopContributors
+                  - networkflowmonitor:CreateScope
+                  - networkflowmonitor:DeleteScope
+                  - networkflowmonitor:GetScope
+                  - networkflowmonitor:ListScopes
+                  - networkflowmonitor:UpdateScope
+                Resource: '*'
+              # CloudWatch enhanced permissions for performance monitoring
+              - Effect: Allow
+                Action:
+                  - cloudwatch:GetMetricStatistics
+                  - cloudwatch:ListMetrics
+                  - cloudwatch:PutMetricData
+                  - cloudwatch:GetMetricData
+                  - cloudwatch:DescribeAlarms
+                  - cloudwatch:PutMetricAlarm
+                  - cloudwatch:DeleteAlarms
+                Resource: '*'
+              # Enhanced CloudWatch Logs permissions for flow log analysis
+              - Effect: Allow
+                Action:
+                  - logs:StartQuery
+                  - logs:StopQuery
+                  - logs:GetQueryResults
+                  - logs:DescribeQueries
+                  - logs:FilterLogEvents
+                  - logs:GetLogEvents
+                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*'
+              # Application Insights permissions for performance monitoring
+              - Effect: Allow
+                Action:
+                  - application-insights:CreateApplication
+                  - application-insights:DeleteApplication
+                  - application-insights:DescribeApplication
+                  - application-insights:ListApplications
+                  - application-insights:UpdateApplication
+                Resource: '*'
+              # Enhanced X-Ray permissions for performance tracing
+              - Effect: Allow
+                Action:
+                  - xray:GetTraceGraph
+                  - xray:GetTraceSummaries
+                  - xray:BatchGetTraces
+                  - xray:GetServiceGraph
+                Resource: '*'
+              # Bedrock model permissions for AI operations (all regions)
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                  - bedrock:GetFoundationModel
+                  - bedrock:ListFoundationModels
+                  - bedrock:GetInferenceProfile
+                  - bedrock:ListInferenceProfiles
+                Resource: 
+                  - 'arn:aws:bedrock:*::foundation-model/*'
+                  - !Sub 'arn:aws:bedrock:*:${AWS::AccountId}:inference-profile/*'
+
+  # Store execution role ARN in SSM for AgentCore CLI
+  GatewayExecutionRoleParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /a2a/app/performance/agentcore/gateway_iam_role
+      Type: String
+      Value: !GetAtt AgentCoreExecutionRole.Arn
+      Description: IAM execution role ARN for AgentCore runtime
+      Tags:
+        Application: NetOps
+
+  # Store machine client secret in SSM for OAuth token generation
+  MachineClientSecretParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /a2a/app/performance/agentcore/machine_client_secret
+      Type: String
+      Value: !GetAtt MachineUserPoolClient.ClientSecret
+      Description: Cognito machine client secret for OAuth token generation
+      Tags:
+        Application: NetOps
+
+Outputs:
+  UserPoolId:
+    Description: Cognito User Pool ID
+    Value: !Ref UserPool
+    Export:
+      Name: !Sub "${AWS::StackName}-UserPoolId"
+
+  WebClientId:
+    Description: Web Application Client ID
+    Value: !Ref WebUserPoolClient
+    Export:
+      Name: !Sub "${AWS::StackName}-WebClientId"
+
+  MachineClientId:
+    Description: Machine Application Client ID  
+    Value: !Ref MachineUserPoolClient
+    Export:
+      Name: !Sub "${AWS::StackName}-MachineClientId"
+
+  CognitoDomain:
+    Description: Cognito Domain
+    Value: !Join
+      - ''
+      - - !Sub 'https://performance-${AWS::AccountId}-'
+        - !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]]
+        - !Sub '.auth.${AWS::Region}.amazoncognito.com'
+    Export:
+      Name: !Sub "${AWS::StackName}-CognitoDomain"

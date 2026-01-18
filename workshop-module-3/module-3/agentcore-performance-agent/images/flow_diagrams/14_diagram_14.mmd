@@ -1,0 +1,32 @@
+graph TB
+    subgraph "External Dependencies"
+        A[AWS SDK (boto3)]
+        B[CloudWatch Services]
+        C[EC2 Services]
+        D[Systems Manager]
+        E[S3 Services]
+    end
+    
+    subgraph "performance_tools.py"
+        F[PerformanceAnalyzer Class]
+        G[Public Functions]
+    end
+    
+    subgraph "Integration Points"
+        H[Lambda Function Handler]
+        I[MCP Server Tools]
+        J[Chain of Responsibility]
+        K[External Scripts]
+    end
+    
+    A --> F
+    B --> F
+    C --> F
+    D --> F
+    E --> F
+    
+    F --> G
+    G --> H
+    G --> I
+    G --> J
+    G --> K

@@ -1,0 +1,45 @@
+# Use explicit AMD64 architecture for AWS ECS Fargate compatibility
+FROM python:3.12-slim
+
+# Set working directory
+WORKDIR /app
+
+# Install system dependencies with explicit architecture handling
+RUN apt-get update && apt-get install -y \
+    gcc \
+    curl \
+    file \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# Copy requirements and install Python dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir -r requirements.txt
+
+# Copy application code (exclude problematic directories)
+COPY __init__.py __main__.py agent_executer.py utils.py config.yaml ./
+
+# Ensure /usr/local/bin/python exists and verify architecture
+RUN uname -m && python --version \
+    && ln -sf /usr/local/bin/python3 /usr/local/bin/python \
+    && /usr/local/bin/python --version
+
+# Create non-root user for security
+RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
+USER appuser
+
+# Expose port (matches config.yaml default_port)
+EXPOSE 10003
+
+# Health check for ECS using Python instead of curl
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+  CMD python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:10003/health', timeout=10)" || exit 1
+
+# Set environment variables
+ENV PYTHONPATH=/app
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+
+# Run the application
+CMD ["python", "__main__.py"]

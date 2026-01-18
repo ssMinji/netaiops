@@ -1,0 +1,34 @@
+default_agent: troubleshooting_agent_runtime_with_memory
+agents:
+  troubleshooting_agent_runtime_with_memory:
+    name: troubleshooting_agent_runtime_with_memory
+    entrypoint: main.py
+    platform: linux/arm64
+    container_runtime: docker
+    aws:
+      execution_role: arn:aws:iam::659416982194:role/troubleshooting-gateway-execution-role
+      execution_role_auto_create: true
+      account: '659416982194'
+      region: us-east-1
+      ecr_repository: 659416982194.dkr.ecr.us-east-1.amazonaws.com/bedrock-agentcore-troubleshooting_agent_runtime_with_memory
+      ecr_auto_create: false
+      network_configuration:
+        network_mode: PUBLIC
+      protocol_configuration:
+        server_protocol: HTTP
+      observability:
+        enabled: true
+    bedrock_agentcore:
+      agent_id: troubleshooting_agent_runtime_with_memory-LeltULHORz
+      agent_arn: arn:aws:bedrock-agentcore:us-east-1:659416982194:runtime/troubleshooting_agent_runtime_with_memory-LeltULHORz
+      agent_session_id: null
+    codebuild:
+      project_name: bedrock-agentcore-troubleshooting_agent_runtime_with_memory-builder
+      execution_role: arn:aws:iam::659416982194:role/AmazonBedrockAgentCoreSDKCodeBuild-us-east-1-92cfc89df2
+      source_bucket: bedrock-agentcore-codebuild-sources-659416982194-us-east-1
+    authorizer_configuration:
+      customJWTAuthorizer:
+        discoveryUrl: https://cognito-idp.us-east-1.amazonaws.com/us-east-1_ap6ZJb4IL/.well-known/openid-configuration
+        allowedClients:
+        - 45pp2nhg46t0tfaq0dekhniu0p
+    oauth_configuration: null

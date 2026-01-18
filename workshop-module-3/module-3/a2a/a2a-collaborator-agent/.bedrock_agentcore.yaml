@@ -1,0 +1,34 @@
+default_agent: a2a_collaborator_agent_runtime
+agents:
+  a2a_collaborator_agent_runtime:
+    name: a2a_collaborator_agent_runtime
+    entrypoint: main.py
+    platform: linux/arm64
+    container_runtime: docker
+    aws:
+      execution_role: arn:aws:iam::104398007905:role/performance-gateway-execution-role
+      execution_role_auto_create: true
+      account: '104398007905'
+      region: us-east-1
+      ecr_repository: 104398007905.dkr.ecr.us-east-1.amazonaws.com/bedrock-agentcore-a2a_collaborator_agent_runtime
+      ecr_auto_create: false
+      network_configuration:
+        network_mode: PUBLIC
+      protocol_configuration:
+        server_protocol: HTTP
+      observability:
+        enabled: true
+    bedrock_agentcore:
+      agent_id: a2a_collaborator_agent_runtime-jSphZa814Q
+      agent_arn: arn:aws:bedrock-agentcore:us-east-1:104398007905:runtime/a2a_collaborator_agent_runtime-jSphZa814Q
+      agent_session_id: null
+    codebuild:
+      project_name: bedrock-agentcore-a2a_collaborator_agent_runtime-builder
+      execution_role: arn:aws:iam::104398007905:role/AmazonBedrockAgentCoreSDKCodeBuild-us-east-1-1f0365d310
+      source_bucket: bedrock-agentcore-codebuild-sources-104398007905-us-east-1
+    authorizer_configuration:
+      customJWTAuthorizer:
+        discoveryUrl: https://cognito-idp.us-east-1.amazonaws.com/us-east-1_NSfrtr3e1/.well-known/openid-configuration
+        allowedClients:
+        - k8dgn2e038vs36ogbqae1u3e9
+    oauth_configuration: null

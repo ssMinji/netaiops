@@ -1,0 +1,24 @@
+graph TD
+    A[Function Called] --> B{Try Block}
+    B --> C[Execute Main Logic]
+    C --> D{Success?}
+    D -->|Yes| E[Return Success Response]
+    D -->|No| F[Catch Exception]
+    F --> G[Log Error Details]
+    G --> H[Create Error Response]
+    H --> I{Function Type}
+    I -->|Class Method| J[Return Dict with Error]
+    I -->|Public Function| K[Return JSON String with Error]
+    
+    subgraph "Error Response Structure"
+        L[error: Error message]
+        M[error_type: Exception class name]
+        N[status: 'failed']
+        O[Additional context fields]
+    end
+    
+    J --> L
+    K --> L
+    L --> M
+    M --> N
+    N --> O

@@ -1,0 +1,1146 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Traffic Mirroring Infrastructure for Network Performance Analysis'
+
+Parameters:
+  MainStackName:
+    Type: String
+    Description: Name of the main sample-app stack to reference resources
+    Default: acme-image-gallery-perf
+  
+  BastionInstanceId:
+    Type: String
+    Description: Instance ID of the Bastion EC2 instance to mirror traffic from
+    Default: ""
+  
+  ReportingInstanceId:
+    Type: String
+    Description: Instance ID of the Reporting EC2 instance to mirror traffic from
+    Default: ""
+  
+  TargetSubnetId:
+    Type: String
+    Description: Subnet ID where the Traffic Mirroring Target instance will be deployed (must be a private subnet in the App VPC)
+    Default: ""
+
+Conditions:
+  HasBastionInstanceId: !Not [!Equals [!Ref BastionInstanceId, ""]]
+  HasReportingInstanceId: !Not [!Equals [!Ref ReportingInstanceId, ""]]
+  HasTargetSubnetId: !Not [!Equals [!Ref TargetSubnetId, ""]]
+
+Resources:
+  # ==========================================
+  # TRAFFIC MIRRORING INFRASTRUCTURE
+  # ==========================================
+  
+  # S3 Bucket for Traffic Mirroring Storage
+  TrafficMirroringS3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "traffic-mirroring-analysis-${AWS::AccountId}"
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: TrafficMirroringLifecycle
+            Status: Enabled
+            Transitions:
+              - TransitionInDays: 30
+                StorageClass: STANDARD_IA
+              - TransitionInDays: 90
+                StorageClass: GLACIER
+              - TransitionInDays: 365
+                StorageClass: DEEP_ARCHIVE
+            ExpirationInDays: 2555  # 7 years retention
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags:
+        - Key: Name
+          Value: sample-app-TrafficMirroring-S3Bucket
+        - Key: Purpose
+          Value: PacketCapture
+
+  # S3 Bucket Policy for Traffic Mirroring
+  TrafficMirroringS3BucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    DependsOn:
+      - TrafficMirroringS3Bucket
+      - TrafficMirroringTargetInstanceRole
+      - PacketAnalysisLambdaRole
+    Properties:
+      Bucket: !Ref TrafficMirroringS3Bucket
+      PolicyDocument:
+        Statement:
+          - Sid: AllowTrafficMirroringTargetAccess
+            Effect: Allow
+            Principal:
+              AWS: !GetAtt TrafficMirroringTargetInstanceRole.Arn
+            Action:
+              - s3:PutObject
+              - s3:PutObjectAcl
+              - s3:GetObject
+            Resource: !Sub "arn:aws:s3:::${TrafficMirroringS3Bucket}/*"
+          - Sid: AllowTrafficMirroringTargetListBucket
+            Effect: Allow
+            Principal:
+              AWS: !GetAtt TrafficMirroringTargetInstanceRole.Arn
+            Action:
+              - s3:ListBucket
+            Resource: !Sub "arn:aws:s3:::${TrafficMirroringS3Bucket}"
+          - Sid: AllowPacketAnalysisLambdaAccess
+            Effect: Allow
+            Principal:
+              AWS: !GetAtt PacketAnalysisLambdaRole.Arn
+            Action:
+              - s3:GetObject
+              - s3:PutObject
+            Resource: !Sub "arn:aws:s3:::${TrafficMirroringS3Bucket}/*"
+          - Sid: DenyInsecureConnections
+            Effect: Deny
+            Principal: "*"
+            Action: "s3:*"
+            Resource:
+              - !Sub "arn:aws:s3:::${TrafficMirroringS3Bucket}"
+              - !Sub "arn:aws:s3:::${TrafficMirroringS3Bucket}/*"
+            Condition:
+              Bool:
+                "aws:SecureTransport": "false"
+
+  # IAM Role for Traffic Mirroring Target Instance
+  TrafficMirroringTargetInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
+      Policies:
+        - PolicyName: TrafficMirroringS3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:PutObjectAcl
+                  - s3:GetObject
+                  - s3:ListBucket
+                Resource:
+                  - !Sub "arn:aws:s3:::${TrafficMirroringS3Bucket}/*"
+                  - !GetAtt TrafficMirroringS3Bucket.Arn
+        - PolicyName: CloudWatchMetrics
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cloudwatch:PutMetricData
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: "*"
+        - PolicyName: TrafficMirroringManagement
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ec2:CreateTrafficMirrorTarget
+                  - ec2:CreateTrafficMirrorFilter
+                  - ec2:CreateTrafficMirrorSession
+                  - ec2:CreateTrafficMirrorFilterRule
+                  - ec2:DescribeTrafficMirrorTargets
+                  - ec2:DescribeTrafficMirrorFilters
+                  - ec2:DescribeTrafficMirrorSessions
+                  - ec2:DescribeInstances
+                  - ec2:DescribeNetworkInterfaces
+                  - ec2:ModifyTrafficMirrorSession
+                  - ec2:DeleteTrafficMirrorSession
+                  - ec2:DeleteTrafficMirrorFilter
+                  - ec2:DeleteTrafficMirrorTarget
+                Resource: "*"
+      Tags:
+        - Key: Name
+          Value: sample-app-TrafficMirroring-Target-Role
+
+  TrafficMirroringTargetInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref TrafficMirroringTargetInstanceRole
+
+  # Security Group for Traffic Mirroring Target
+  TrafficMirroringTargetSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for Traffic Mirroring Target
+      VpcId:
+        Fn::ImportValue: !Sub "${MainStackName}-AppVPCId"
+      SecurityGroupIngress:
+        - IpProtocol: udp
+          FromPort: 4789
+          ToPort: 4789
+          CidrIp: 10.2.0.0/16
+          Description: VXLAN traffic from App VPC
+        - IpProtocol: udp
+          FromPort: 4789
+          ToPort: 4789
+          CidrIp: 10.1.0.0/16
+          Description: VXLAN traffic from Reporting VPC
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: sample-app-TrafficMirroring-Target-SG
+
+  # Traffic Mirroring Target Instance
+  TrafficMirroringTargetInstance:
+    Type: AWS::EC2::Instance
+    DependsOn:
+      - TrafficMirroringTargetInstanceProfile
+      - TrafficMirroringTargetSecurityGroup
+    Properties:
+      ImageId: !Sub '{{resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64}}'
+      InstanceType: t3.medium  # Sufficient for packet capture processing
+      SubnetId: !If
+        - HasTargetSubnetId
+        - !Ref TargetSubnetId
+        - Fn::ImportValue: !Sub "${MainStackName}-AppPrivateSubnet2"
+      SecurityGroupIds:
+        - !Ref TrafficMirroringTargetSecurityGroup
+      IamInstanceProfile: !Ref TrafficMirroringTargetInstanceProfile
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          yum update -y
+          yum install -y tcpdump amazon-ssm-agent aws-cli tshark
+          
+          # Install Mountpoint for Amazon S3
+          wget https://s3.amazonaws.com/mountpoint-s3-release/latest/x86_64/mount-s3.rpm
+          sudo yum install -y ./mount-s3.rpm
+          
+          # Create mount directory
+          mkdir -p /mnt/packet-captures
+          
+          # Mount S3 bucket using Mountpoint
+          mount-s3 ${TrafficMirroringS3Bucket} /mnt/packet-captures
+          
+          # Add to fstab for persistent mounting
+          echo "${TrafficMirroringS3Bucket} /mnt/packet-captures fuse.mount-s3 _netdev,allow-delete,region=${AWS::Region} 0 0" >> /etc/fstab
+          
+          # Create systemd service for traffic capture
+          cat > /etc/systemd/system/trafficmirror-tcpdump.service << 'EOF'
+          [Unit]
+          Description=Traffic Mirror TCP Dump Service
+          After=network.target
+          
+          [Service]
+          Type=simple
+          User=root
+          ExecStart=/opt/traffic-mirroring/run_tcpdump.sh
+          Restart=always
+          RestartSec=10
+          
+          [Install]
+          WantedBy=multi-user.target
+          EOF
+          
+          # Create systemd service for service monitoring
+          cat > /etc/systemd/system/trafficmirror-svc-alerts.service << 'EOF'
+          [Unit]
+          Description=Traffic Mirror Service Alerts
+          After=network.target
+          
+          [Service]
+          Type=simple
+          User=root
+          ExecStart=/opt/traffic-mirroring/monitor_service.sh
+          Restart=always
+          RestartSec=30
+          
+          [Install]
+          WantedBy=multi-user.target
+          EOF
+          
+          # Create TCP dump script
+          mkdir -p /opt/traffic-mirroring
+          cat > /opt/traffic-mirroring/run_tcpdump.sh << 'EOF'
+          #!/bin/bash
+          CAPTURE_DIR="/mnt/packet-captures/raw-captures"
+          DATE_PATH="year=$(date +%Y)/month=$(date +%m)/day=$(date +%d)"
+          
+          # Retrieve instance ID using IMDSv2 with retry logic
+          get_instance_id() {
+              local max_attempts=10
+              local attempt=1
+              local instance_id=""
+              
+              while [ $attempt -le $max_attempts ]; do
+                  # Get IMDSv2 token
+                  TOKEN=$(curl -X PUT "http://169.254.169.254/latest/api/token" \
+                      -H "X-aws-ec2-metadata-token-ttl-seconds: 21600" \
+                      -s --connect-timeout 2 --max-time 5 2>/dev/null)
+                  
+                  if [ -n "$TOKEN" ]; then
+                      # Use token to get instance ID
+                      instance_id=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" \
+                          -s --connect-timeout 2 --max-time 5 \
+                          http://169.254.169.254/latest/meta-data/instance-id 2>/dev/null)
+                      
+                      if [ -n "$instance_id" ] && [ "$instance_id" != "" ]; then
+                          echo "$instance_id"
+                          return 0
+                      fi
+                  fi
+                  
+                  # Fallback to IMDSv1 if IMDSv2 fails
+                  instance_id=$(curl -s --connect-timeout 2 --max-time 5 \
+                      http://169.254.169.254/latest/meta-data/instance-id 2>/dev/null)
+                  
+                  if [ -n "$instance_id" ] && [ "$instance_id" != "" ]; then
+                      echo "$instance_id"
+                      return 0
+                  fi
+                  
+                  echo "Attempt $attempt/$max_attempts: Failed to retrieve instance ID, retrying..." >&2
+                  sleep 2
+                  attempt=$((attempt + 1))
+              done
+              
+              # If all attempts fail, use hostname as fallback
+              echo "unknown-$(hostname)"
+              return 1
+          }
+          
+          INSTANCE_ID=$(get_instance_id)
+          
+          if [ -z "$INSTANCE_ID" ] || [ "$INSTANCE_ID" = "" ]; then
+              echo "ERROR: Failed to retrieve instance ID after multiple attempts" >&2
+              INSTANCE_ID="unknown-$(hostname)"
+          fi
+          
+          echo "Starting packet capture for instance: $INSTANCE_ID" | logger -t trafficmirror-tcpdump
+          
+          # Create directory structure
+          mkdir -p "$CAPTURE_DIR/$DATE_PATH/instance-$INSTANCE_ID"
+          
+          # Start packet capture with 2-minute rotation (120 seconds)
+          tcpdump -i any -w "$CAPTURE_DIR/$DATE_PATH/instance-$INSTANCE_ID/capture-%Y%m%d-%H%M%S.pcap" \
+                  -G 120 -W 720 -Z root
+          EOF
+          
+          # Create enhanced traffic mirroring session management script
+          cat > /opt/traffic-mirroring/manage_sessions.sh << 'EOF'
+          #!/bin/bash
+          # Enhanced Traffic Mirroring Session Management
+          # Based on AWS blog post architecture with intelligent filtering
+          
+          # Retrieve instance metadata using IMDSv2
+          get_metadata() {
+              local metadata_path=$1
+              local max_attempts=5
+              local attempt=1
+              
+              while [ $attempt -le $max_attempts ]; do
+                  # Get IMDSv2 token
+                  TOKEN=$(curl -X PUT "http://169.254.169.254/latest/api/token" \
+                      -H "X-aws-ec2-metadata-token-ttl-seconds: 21600" \
+                      -s --connect-timeout 2 --max-time 5 2>/dev/null)
+                  
+                  if [ -n "$TOKEN" ]; then
+                      # Use token to get metadata
+                      result=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" \
+                          -s --connect-timeout 2 --max-time 5 \
+                          "http://169.254.169.254/latest/meta-data/$metadata_path" 2>/dev/null)
+                      
+                      if [ -n "$result" ]; then
+                          echo "$result"
+                          return 0
+                      fi
+                  fi
+                  
+                  # Fallback to IMDSv1
+                  result=$(curl -s --connect-timeout 2 --max-time 5 \
+                      "http://169.254.169.254/latest/meta-data/$metadata_path" 2>/dev/null)
+                  
+                  if [ -n "$result" ]; then
+                      echo "$result"
+                      return 0
+                  fi
+                  
+                  sleep 1
+                  attempt=$((attempt + 1))
+              done
+              
+              return 1
+          }
+          
+          INSTANCE_ID=$(get_metadata "instance-id")
+          REGION=$(get_metadata "placement/region")
+          
+          if [ -z "$INSTANCE_ID" ]; then
+              echo "ERROR: Failed to retrieve instance ID" | logger -t traffic-mirroring
+              exit 1
+          fi
+          
+          if [ -z "$REGION" ]; then
+              echo "ERROR: Failed to retrieve region" | logger -t traffic-mirroring
+              exit 1
+          fi
+          
+          # Function to create traffic mirroring target
+          create_traffic_mirroring_target() {
+              local target_eni=$(aws ec2 describe-instances \
+                  --instance-ids $INSTANCE_ID \
+                  --query 'Reservations[0].Instances[0].NetworkInterfaces[0].NetworkInterfaceId' \
+                  --output text --region $REGION)
+              
+              aws ec2 create-traffic-mirror-target \
+                  --network-interface-id $target_eni \
+                  --description "Traffic mirroring target for packet analysis" \
+                  --region $REGION
+          }
+          
+          # Function to create intelligent traffic filter
+          create_intelligent_filter() {
+              local filter_name="intelligent-filter-$(date +%s)"
+              
+              aws ec2 create-traffic-mirror-filter \
+                  --description "Intelligent filter for performance analysis" \
+                  --region $REGION \
+                  --tag-specifications "ResourceType=traffic-mirror-filter,Tags=[{Key=Name,Value=$filter_name},{Key=Purpose,Value=PerformanceAnalysis}]"
+          }
+          
+          # Function to setup mirroring session
+          setup_mirroring_session() {
+              local source_eni=$1
+              local target_id=$2
+              local filter_id=$3
+              local session_number=$4
+              
+              aws ec2 create-traffic-mirror-session \
+                  --network-interface-id $source_eni \
+                  --traffic-mirror-target-id $target_id \
+                  --traffic-mirror-filter-id $filter_id \
+                  --session-number $session_number \
+                  --description "Performance analysis session for network flow monitoring" \
+                  --region $REGION
+          }
+          
+          # Log session management activities
+          echo "$(date): Traffic mirroring session management script initialized" | logger -t traffic-mirroring
+          EOF
+          
+          chmod +x /opt/traffic-mirroring/manage_sessions.sh
+          
+          # Create service monitoring script
+          cat > /opt/traffic-mirroring/monitor_service.sh << 'EOF'
+          #!/bin/bash
+          while true; do
+              if ! systemctl is-active --quiet trafficmirror-tcpdump.service; then
+                  echo "$(date): Traffic Mirror TCP Dump service is not running" | logger -t trafficmirror-monitor
+                  # Send CloudWatch metric
+                  aws cloudwatch put-metric-data \
+                      --namespace "TrafficMirroring/Health" \
+                      --metric-data MetricName=ServiceStatus,Value=0,Unit=Count \
+                      --region ${AWS::Region}
+              else
+                  # Send healthy status
+                  aws cloudwatch put-metric-data \
+                      --namespace "TrafficMirroring/Health" \
+                      --metric-data MetricName=ServiceStatus,Value=1,Unit=Count \
+                      --region ${AWS::Region}
+              fi
+              sleep 300  # Check every 5 minutes
+          done
+          EOF
+          
+          chmod +x /opt/traffic-mirroring/run_tcpdump.sh
+          chmod +x /opt/traffic-mirroring/monitor_service.sh
+          
+          # Enable and start services
+          systemctl enable trafficmirror-tcpdump
+          systemctl start trafficmirror-tcpdump
+          systemctl enable trafficmirror-svc-alerts
+          systemctl start trafficmirror-svc-alerts
+          systemctl enable amazon-ssm-agent
+          systemctl start amazon-ssm-agent
+          
+          echo "Traffic Mirroring Target setup complete"
+      Tags:
+        - Key: Name
+          Value: sample-app-TrafficMirroringTarget
+        - Key: Purpose
+          Value: PacketCapture
+        - Key: NetworkFlowMonitor
+          Value: enabled
+
+  # Packet Analysis Lambda Function
+  PacketAnalysisFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "sample-app-packet-analysis-${MainStackName}"
+      Runtime: python3.9
+      Handler: index.lambda_handler
+      Role: !GetAtt PacketAnalysisLambdaRole.Arn
+      Timeout: 300
+      MemorySize: 1024
+      Environment:
+        Variables:
+          S3_BUCKET: !Ref TrafficMirroringS3Bucket
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import subprocess
+          import os
+          from datetime import datetime
+          import tempfile
+          
+          def lambda_handler(event, context):
+              s3_client = boto3.client('s3')
+              cloudwatch = boto3.client('cloudwatch')
+              
+              analysis_results = []
+              
+              for record in event['Records']:
+                  bucket = record['s3']['bucket']['name']
+                  key = record['s3']['object']['key']
+                  
+                  print(f"Processing PCAP file: s3://{bucket}/{key}")
+                  
+                  # Download PCAP file to temporary location
+                  with tempfile.NamedTemporaryFile(suffix='.pcap', delete=False) as tmp_file:
+                      try:
+                          s3_client.download_file(bucket, key, tmp_file.name)
+                          
+                          # Analyze the PCAP file
+                          analysis_result = analyze_pcap_with_tshark(tmp_file.name, key)
+                          analysis_results.append(analysis_result)
+                          
+                          # Upload analysis results back to S3
+                          analysis_key = key.replace('.pcap', '-analysis.json')
+                          s3_client.put_object(
+                              Bucket=bucket,
+                              Key=analysis_key,
+                              Body=json.dumps(analysis_result, indent=2),
+                              ContentType='application/json'
+                          )
+                          
+                          # Send metrics to CloudWatch
+                          send_metrics_to_cloudwatch(analysis_result, cloudwatch)
+                          
+                          # Check for critical issues and send alerts
+                          if analysis_result.get('critical_issues'):
+                              send_performance_alert(analysis_result)
+                          
+                      finally:
+                          # Clean up temporary file
+                          if os.path.exists(tmp_file.name):
+                              os.unlink(tmp_file.name)
+              
+              return {
+                  'statusCode': 200,
+                  'body': json.dumps({
+                      'processed_files': len(analysis_results),
+                      'analysis_results': analysis_results
+                  })
+              }
+          
+          def analyze_pcap_with_tshark(pcap_file_path, s3_key):
+              analysis_result = {
+                  'file_path': s3_key,
+                  'analysis_timestamp': datetime.utcnow().isoformat(),
+                  'file_size_bytes': os.path.getsize(pcap_file_path),
+                  'tcp_analysis': {},
+                  'connection_analysis': {},
+                  'performance_metrics': {},
+                  'critical_issues': [],
+                  'recommendations': []
+              }
+              
+              try:
+                  # Basic packet count (simplified analysis for Lambda environment)
+                  stats_cmd = ['wc', '-c', pcap_file_path]
+                  stats_result = subprocess.run(stats_cmd, capture_output=True, text=True, timeout=30)
+                  
+                  file_size = int(stats_result.stdout.split()[0]) if stats_result.stdout.strip() else 0
+                  
+                  # Estimate packet count based on file size (rough approximation)
+                  estimated_packets = max(1, file_size // 64)  # Assume average 64 bytes per packet
+                  
+                  analysis_result['tcp_analysis'] = {
+                      'estimated_packets': estimated_packets,
+                      'file_size_bytes': file_size
+                  }
+                  
+                  analysis_result['performance_metrics'] = {
+                      'packets_per_second': estimated_packets / 900,  # 15-minute capture
+                      'bytes_per_second': file_size / 900
+                  }
+                  
+                  # Generate alerts based on file size (proxy for traffic volume)
+                  if file_size > 100 * 1024 * 1024:  # > 100MB
+                      analysis_result['critical_issues'].append({
+                          'type': 'high_traffic_volume',
+                          'severity': 'medium',
+                          'description': f'High traffic volume detected: {file_size / (1024*1024):.1f} MB',
+                          'recommendation': 'Monitor for potential network congestion'
+                      })
+                  
+                  if estimated_packets > 100000:  # > 100k packets in 15 minutes
+                      analysis_result['critical_issues'].append({
+                          'type': 'high_packet_rate',
+                          'severity': 'medium',
+                          'description': f'High packet rate detected: ~{estimated_packets} packets',
+                          'recommendation': 'Investigate traffic patterns and potential issues'
+                      })
+                  
+              except Exception as e:
+                  analysis_result['critical_issues'].append({
+                      'type': 'analysis_error',
+                      'severity': 'low',
+                      'description': f'Analysis error: {str(e)}',
+                      'recommendation': 'Check PCAP file integrity'
+                  })
+              
+              return analysis_result
+          
+          def send_metrics_to_cloudwatch(analysis_result, cloudwatch_client):
+              try:
+                  metrics = []
+                  
+                  tcp_analysis = analysis_result.get('tcp_analysis', {})
+                  performance_metrics = analysis_result.get('performance_metrics', {})
+                  
+                  if 'estimated_packets' in tcp_analysis:
+                      metrics.append({
+                          'MetricName': 'PacketCount',
+                          'Value': tcp_analysis['estimated_packets'],
+                          'Unit': 'Count',
+                          'Timestamp': datetime.utcnow()
+                      })
+                  
+                  if 'bytes_per_second' in performance_metrics:
+                      metrics.append({
+                          'MetricName': 'BytesPerSecond',
+                          'Value': performance_metrics['bytes_per_second'],
+                          'Unit': 'Bytes/Second',
+                          'Timestamp': datetime.utcnow()
+                      })
+                  
+                  if metrics:
+                      cloudwatch_client.put_metric_data(
+                          Namespace='TrafficMirroring/Performance',
+                          MetricData=metrics
+                      )
+                      
+              except Exception as e:
+                  print(f"Error sending metrics to CloudWatch: {e}")
+          
+          def send_performance_alert(analysis_result):
+              try:
+                  sns = boto3.client('sns')
+                  
+                  critical_issues = analysis_result.get('critical_issues', [])
+                  if not critical_issues:
+                      return
+                  
+                  alert_message = {
+                      'alert_type': 'traffic_mirroring_performance_issue',
+                      'timestamp': datetime.utcnow().isoformat(),
+                      'file_analyzed': analysis_result.get('file_path', 'unknown'),
+                      'critical_issues': critical_issues,
+                      'recommendations': analysis_result.get('recommendations', [])
+                  }
+                  
+                  topic_arn = os.environ.get('SNS_TOPIC_ARN')
+                  if topic_arn:
+                      sns.publish(
+                          TopicArn=topic_arn,
+                          Subject='Traffic Mirroring Performance Alert',
+                          Message=json.dumps(alert_message, indent=2)
+                      )
+                      
+              except Exception as e:
+                  print(f"Error sending performance alert: {e}")
+
+  # IAM Role for Packet Analysis Lambda
+  PacketAnalysisLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: PacketAnalysisS3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                Resource: !Sub "arn:aws:s3:::traffic-mirroring-analysis-${AWS::AccountId}/*"
+              - Effect: Allow
+                Action:
+                  - s3:ListBucket
+                Resource: !Sub "arn:aws:s3:::traffic-mirroring-analysis-${AWS::AccountId}"
+              - Effect: Allow
+                Action:
+                  - cloudwatch:PutMetricData
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - sns:Publish
+                Resource: !Ref TrafficMirroringAlertsTopic
+
+  # Lambda Permission for S3 to invoke Packet Analysis Function
+  PacketAnalysisLambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    DependsOn:
+      - PacketAnalysisFunction
+      - TrafficMirroringS3Bucket
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref PacketAnalysisFunction
+      Principal: s3.amazonaws.com
+      SourceArn: !GetAtt TrafficMirroringS3Bucket.Arn
+
+  # SNS Topic for Traffic Mirroring Alerts
+  TrafficMirroringAlertsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub "traffic-mirroring-alerts-${MainStackName}"
+      DisplayName: Traffic Mirroring Performance Alerts
+      Tags:
+        - Key: Name
+          Value: !Sub "${MainStackName}-TrafficMirroring-Alerts"
+        - Key: Purpose
+          Value: PerformanceMonitoring
+
+  # CloudWatch Dashboard for Traffic Mirroring
+  TrafficMirroringDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    DependsOn:
+      - PacketAnalysisFunction
+    Properties:
+      DashboardName: !Sub "TrafficMirroring-${MainStackName}"
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 0,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  ["TrafficMirroring/Performance", "PacketCount"],
+                  [".", "BytesPerSecond"],
+                  ["TrafficMirroring/Health", "ServiceStatus"]
+                ],
+                "period": 300,
+                "stat": "Average",
+                "region": "${AWS::Region}",
+                "title": "Traffic Mirroring Performance Metrics"
+              }
+            },
+            {
+              "type": "log",
+              "x": 0,
+              "y": 6,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "query": "SOURCE '/aws/lambda/${PacketAnalysisFunction}'\n| fields @timestamp, @message\n| filter @message like /critical_issues/\n| sort @timestamp desc\n| limit 20",
+                "region": "${AWS::Region}",
+                "title": "Critical Performance Issues",
+                "view": "table"
+              }
+            }
+          ]
+        }
+
+  # CloudWatch Log Group for Packet Analysis Lambda
+  PacketAnalysisLambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${PacketAnalysisFunction}"
+      RetentionInDays: 14
+
+  # ==========================================
+  # CUSTOM RESOURCE FOR NETWORK INTERFACE LOOKUP
+  # ==========================================
+  
+  # Lambda Function to retrieve Network Interface IDs from Instance IDs
+  GetNetworkInterfaceFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "sample-app-get-eni-${MainStackName}"
+      Runtime: python3.9
+      Handler: index.lambda_handler
+      Role: !GetAtt GetNetworkInterfaceLambdaRole.Arn
+      Timeout: 60
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import cfnresponse
+          
+          ec2 = boto3.client('ec2')
+          
+          def lambda_handler(event, context):
+              print(f"Received event: {json.dumps(event)}")
+              
+              try:
+                  if event['RequestType'] == 'Delete':
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+                      return
+                  
+                  instance_id = event['ResourceProperties'].get('InstanceId')
+                  
+                  if not instance_id:
+                      cfnresponse.send(event, context, cfnresponse.FAILED, 
+                                     {}, reason="InstanceId parameter is required")
+                      return
+                  
+                  # Describe the instance to get its primary network interface
+                  response = ec2.describe_instances(InstanceIds=[instance_id])
+                  
+                  if not response['Reservations']:
+                      cfnresponse.send(event, context, cfnresponse.FAILED, 
+                                     {}, reason=f"Instance {instance_id} not found")
+                      return
+                  
+                  instance = response['Reservations'][0]['Instances'][0]
+                  network_interfaces = instance.get('NetworkInterfaces', [])
+                  
+                  if not network_interfaces:
+                      cfnresponse.send(event, context, cfnresponse.FAILED, 
+                                     {}, reason=f"No network interfaces found for instance {instance_id}")
+                      return
+                  
+                  # Get the primary network interface (DeviceIndex 0)
+                  primary_eni = None
+                  for eni in network_interfaces:
+                      if eni.get('Attachment', {}).get('DeviceIndex') == 0:
+                          primary_eni = eni['NetworkInterfaceId']
+                          break
+                  
+                  if not primary_eni:
+                      # Fallback to first network interface if no primary found
+                      primary_eni = network_interfaces[0]['NetworkInterfaceId']
+                  
+                  response_data = {
+                      'NetworkInterfaceId': primary_eni,
+                      'InstanceId': instance_id
+                  }
+                  
+                  print(f"Successfully retrieved ENI: {primary_eni} for instance: {instance_id}")
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, response_data)
+                  
+              except Exception as e:
+                  print(f"Error: {str(e)}")
+                  cfnresponse.send(event, context, cfnresponse.FAILED, 
+                                 {}, reason=str(e))
+
+  # IAM Role for Get Network Interface Lambda
+  GetNetworkInterfaceLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DescribeEC2Instances
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ec2:DescribeInstances
+                  - ec2:DescribeNetworkInterfaces
+                Resource: "*"
+
+  # CloudWatch Log Group for Get Network Interface Lambda
+  GetNetworkInterfaceLambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/sample-app-get-network-interface-${MainStackName}"
+      RetentionInDays: 7
+
+  # Custom Resource to get Bastion Instance Network Interface ID
+  BastionNetworkInterfaceLookup:
+    Type: Custom::GetNetworkInterface
+    Condition: HasBastionInstanceId
+    DependsOn: GetNetworkInterfaceFunction
+    Properties:
+      ServiceToken: !GetAtt GetNetworkInterfaceFunction.Arn
+      InstanceId: !Ref BastionInstanceId
+
+  # Custom Resource to get Reporting Instance Network Interface ID
+  ReportingNetworkInterfaceLookup:
+    Type: Custom::GetNetworkInterface
+    Condition: HasReportingInstanceId
+    DependsOn: GetNetworkInterfaceFunction
+    Properties:
+      ServiceToken: !GetAtt GetNetworkInterfaceFunction.Arn
+      InstanceId: !Ref ReportingInstanceId
+
+  # Custom Resource to get Traffic Mirroring Target Instance Network Interface ID
+  TrafficMirroringTargetNetworkInterfaceLookup:
+    Type: Custom::GetNetworkInterface
+    DependsOn: 
+      - GetNetworkInterfaceFunction
+      - TrafficMirroringTargetInstance
+    Properties:
+      ServiceToken: !GetAtt GetNetworkInterfaceFunction.Arn
+      InstanceId: !Ref TrafficMirroringTargetInstance
+
+  # ==========================================
+  # TRAFFIC MIRROR TARGET
+  # ==========================================
+  TrafficMirrorTarget:
+    Type: AWS::EC2::TrafficMirrorTarget
+    DependsOn: TrafficMirroringTargetNetworkInterfaceLookup
+    Properties:
+      Description: Traffic mirror target for performance analysis
+      NetworkInterfaceId: !GetAtt TrafficMirroringTargetNetworkInterfaceLookup.NetworkInterfaceId
+      Tags:
+        - Key: Name
+          Value: !Sub "${MainStackName}-TrafficMirror-Target"
+        - Key: Purpose
+          Value: PacketCapture
+
+  # ==========================================
+  # TRAFFIC MIRROR FILTER
+  # ==========================================
+  TrafficMirrorFilter:
+    Type: AWS::EC2::TrafficMirrorFilter
+    Properties:
+      Description: Intelligent filter for performance analysis - captures TCP and UDP traffic
+      Tags:
+        - Key: Name
+          Value: !Sub "${MainStackName}-TrafficMirror-Filter"
+        - Key: Purpose
+          Value: PerformanceAnalysis
+
+  # Ingress Filter Rules - TCP Traffic
+  TrafficMirrorFilterRuleTCPIngress:
+    Type: AWS::EC2::TrafficMirrorFilterRule
+    Properties:
+      TrafficMirrorFilterId: !Ref TrafficMirrorFilter
+      TrafficDirection: ingress
+      RuleNumber: 100
+      RuleAction: accept
+      Protocol: 6
+      SourceCidrBlock: 0.0.0.0/0
+      DestinationCidrBlock: 0.0.0.0/0
+      SourcePortRange:
+        FromPort: 1
+        ToPort: 65535
+      DestinationPortRange:
+        FromPort: 1
+        ToPort: 65535
+      Description: Accept all TCP ingress traffic
+
+  # Ingress Filter Rules - UDP Traffic
+  TrafficMirrorFilterRuleUDPIngress:
+    Type: AWS::EC2::TrafficMirrorFilterRule
+    Properties:
+      TrafficMirrorFilterId: !Ref TrafficMirrorFilter
+      TrafficDirection: ingress
+      RuleNumber: 110
+      RuleAction: accept
+      Protocol: 17
+      SourceCidrBlock: 0.0.0.0/0
+      DestinationCidrBlock: 0.0.0.0/0
+      SourcePortRange:
+        FromPort: 1
+        ToPort: 65535
+      DestinationPortRange:
+        FromPort: 1
+        ToPort: 65535
+      Description: Accept all UDP ingress traffic
+
+  # Egress Filter Rules - TCP Traffic
+  TrafficMirrorFilterRuleTCPEgress:
+    Type: AWS::EC2::TrafficMirrorFilterRule
+    Properties:
+      TrafficMirrorFilterId: !Ref TrafficMirrorFilter
+      TrafficDirection: egress
+      RuleNumber: 100
+      RuleAction: accept
+      Protocol: 6
+      SourceCidrBlock: 0.0.0.0/0
+      DestinationCidrBlock: 0.0.0.0/0
+      SourcePortRange:
+        FromPort: 1
+        ToPort: 65535
+      DestinationPortRange:
+        FromPort: 1
+        ToPort: 65535
+      Description: Accept all TCP egress traffic
+
+  # Egress Filter Rules - UDP Traffic
+  TrafficMirrorFilterRuleUDPEgress:
+    Type: AWS::EC2::TrafficMirrorFilterRule
+    Properties:
+      TrafficMirrorFilterId: !Ref TrafficMirrorFilter
+      TrafficDirection: egress
+      RuleNumber: 110
+      RuleAction: accept
+      Protocol: 17
+      SourceCidrBlock: 0.0.0.0/0
+      DestinationCidrBlock: 0.0.0.0/0
+      SourcePortRange:
+        FromPort: 1
+        ToPort: 65535
+      DestinationPortRange:
+        FromPort: 1
+        ToPort: 65535
+      Description: Accept all UDP egress traffic
+
+  # ==========================================
+  # TRAFFIC MIRROR SESSIONS
+  # ==========================================
+  
+  # Session 1: Mirror traffic from BastionEC2Instance (from sample-app stack)
+  BastionTrafficMirrorSession:
+    Type: AWS::EC2::TrafficMirrorSession
+    Condition: HasBastionInstanceId
+    DependsOn:
+      - TrafficMirrorTarget
+      - TrafficMirrorFilter
+      - BastionNetworkInterfaceLookup
+    Properties:
+      Description: Performance analysis session for Bastion instance
+      NetworkInterfaceId: !GetAtt BastionNetworkInterfaceLookup.NetworkInterfaceId
+      TrafficMirrorTargetId: !Ref TrafficMirrorTarget
+      TrafficMirrorFilterId: !Ref TrafficMirrorFilter
+      SessionNumber: 1
+      PacketLength: 65535
+      VirtualNetworkId: 1
+      Tags:
+        - Key: Name
+          Value: !Sub "${MainStackName}-Bastion-MirrorSession"
+        - Key: SourceInstance
+          Value: BastionEC2Instance
+        - Key: Purpose
+          Value: PerformanceMonitoring
+
+  # Session 2: Mirror traffic from ReportingServer (from sample-app stack)
+  ReportingServerTrafficMirrorSession:
+    Type: AWS::EC2::TrafficMirrorSession
+    Condition: HasReportingInstanceId
+    DependsOn:
+      - TrafficMirrorTarget
+      - TrafficMirrorFilter
+      - ReportingNetworkInterfaceLookup
+    Properties:
+      Description: Performance analysis session for Reporting Server instance
+      NetworkInterfaceId: !GetAtt ReportingNetworkInterfaceLookup.NetworkInterfaceId
+      TrafficMirrorTargetId: !Ref TrafficMirrorTarget
+      TrafficMirrorFilterId: !Ref TrafficMirrorFilter
+      SessionNumber: 2
+      PacketLength: 65535
+      VirtualNetworkId: 2
+      Tags:
+        - Key: Name
+          Value: !Sub "${MainStackName}-ReportingServer-MirrorSession"
+        - Key: SourceInstance
+          Value: ReportingEC2Instance
+        - Key: Purpose
+          Value: PerformanceMonitoring
+
+Outputs:
+  TrafficMirroringS3BucketName:
+    Description: Name of the S3 bucket for traffic mirroring storage
+    Value: !Ref TrafficMirroringS3Bucket
+    Export:
+      Name: !Sub "${MainStackName}-TrafficMirroring-S3Bucket"
+
+  TrafficMirroringTargetInstanceId:
+    Description: Instance ID of the traffic mirroring target
+    Value: !Ref TrafficMirroringTargetInstance
+    Export:
+      Name: !Sub "${MainStackName}-TrafficMirroring-Target-InstanceId"
+
+  TrafficMirroringTargetPrivateIP:
+    Description: Private IP of the traffic mirroring target instance
+    Value: !GetAtt TrafficMirroringTargetInstance.PrivateIp
+    Export:
+      Name: !Sub "${MainStackName}-TrafficMirroring-Target-IP"
+
+  PacketAnalysisFunctionArn:
+    Description: ARN of the Packet Analysis Lambda Function
+    Value: !GetAtt PacketAnalysisFunction.Arn
+    Export:
+      Name: !Sub "${MainStackName}-PacketAnalysis-ARN"
+
+  TrafficMirroringAlertsTopicArn:
+    Description: ARN of the SNS topic for traffic mirroring alerts
+    Value: !Ref TrafficMirroringAlertsTopic
+    Export:
+      Name: !Sub "${MainStackName}-TrafficMirroring-Alerts-Topic"
+
+  TrafficMirroringDashboardURL:
+    Description: URL to the CloudWatch dashboard for traffic mirroring monitoring
+    Value: !Sub "https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name=TrafficMirroring-${MainStackName}"
+    Export:
+      Name: !Sub "${MainStackName}-TrafficMirroring-Dashboard-URL"
+
+  TrafficMirroringTargetSecurityGroupId:
+    Description: Security Group ID for the traffic mirroring target
+    Value: !Ref TrafficMirroringTargetSecurityGroup
+    Export:
+      Name: !Sub "${MainStackName}-TrafficMirroring-Target-SG-ID"
+
+  BastionMirrorSessionId:
+    Condition: HasBastionInstanceId
+    Description: Traffic Mirror Session ID for Bastion instance
+    Value: !Ref BastionTrafficMirrorSession
+    Export:
+      Name: !Sub "${MainStackName}-Bastion-MirrorSession-ID"
+
+  ReportingServerMirrorSessionId:
+    Condition: HasReportingInstanceId
+    Description: Traffic Mirror Session ID for Reporting Server instance
+    Value: !Ref ReportingServerTrafficMirrorSession
+    Export:
+      Name: !Sub "${MainStackName}-ReportingServer-MirrorSession-ID"
+
+  TrafficMirrorTargetId:
+    Description: Traffic Mirror Target ID
+    Value: !Ref TrafficMirrorTarget
+    Export:
+      Name: !Sub "${MainStackName}-TrafficMirror-Target-ID"
+
+  TrafficMirrorFilterId:
+    Description: Traffic Mirror Filter ID
+    Value: !Ref TrafficMirrorFilter
+    Export:
+      Name: !Sub "${MainStackName}-TrafficMirror-Filter-ID"

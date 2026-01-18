@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>A2A ALB Access Guide</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #2c3e50;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .service-section {
+            margin: 30px 0;
+            padding: 20px;
+            border: 2px solid #3498db;
+            border-radius: 8px;
+            background-color: #f8f9fa;
+        }
+        .service-title {
+            color: #2980b9;
+            font-size: 1.5em;
+            margin-bottom: 15px;
+        }
+        .endpoint-list {
+            list-style: none;
+            padding: 0;
+        }
+        .endpoint-item {
+            margin: 10px 0;
+            padding: 15px;
+            background: white;
+            border-radius: 5px;
+            border-left: 4px solid #27ae60;
+        }
+        .endpoint-url {
+            font-family: monospace;
+            background: #ecf0f1;
+            padding: 8px 12px;
+            border-radius: 4px;
+            display: inline-block;
+            margin: 5px 0;
+            word-break: break-all;
+        }
+        .test-button {
+            background: #3498db;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+            text-decoration: none;
+            display: inline-block;
+        }
+        .test-button:hover {
+            background: #2980b9;
+        }
+        .status-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+        .status-unknown { background-color: #95a5a6; }
+        .status-success { background-color: #27ae60; }
+        .status-error { background-color: #e74c3c; }
+        .test-results {
+            margin-top: 20px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 5px;
+            border: 1px solid #dee2e6;
+        }
+        .curl-command {
+            background: #2c3e50;
+            color: #ecf0f1;
+            padding: 15px;
+            border-radius: 5px;
+            font-family: monospace;
+            margin: 10px 0;
+            overflow-x: auto;
+            white-space: pre-line;
+        }
+        .info-box {
+            background: #e8f4fd;
+            border: 1px solid #bee5eb;
+            border-radius: 5px;
+            padding: 15px;
+            margin: 20px 0;
+        }
+        .warning-box {
+            background: #fff3cd;
+            border: 1px solid #ffeaa7;
+            border-radius: 5px;
+            padding: 15px;
+            margin: 20px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 A2A Agent Load Balancer Access Guide</h1>
+        
+        <div class="info-box">
+            <h3>📋 Deployment Status</h3>
+            <p><strong>✅ Both ALBs are active and healthy!</strong></p>
+            <p>AWS diagnostic shows both services are running with healthy targets:</p>
+            <ul>
+                <li>Connectivity Agent: <code>a2a-connectivity-alb-x.us-east-1.elb.amazonaws.com:10003 - healthy</code></li>
+                <li>Performance Agent: <code>a2a-performance-alb-x.us-east-1.elb.amazonaws.com:10005 - healthy</code></li>
+            </ul>
+            <p><em>Last updated: 2025-10-13 13:34:00</em></p>
+        </div>
+
+        <div class="service-section">
+            <div class="service-title">🔧 Connectivity Troubleshooting Agent</div>
+            <p><strong>ALB DNS:</strong> <code>a2a-connectivity-alb-x.us-east-1.elb.amazonaws.com</code></p>
+            
+            <ul class="endpoint-list">
+                <li class="endpoint-item">
+                    <strong>Health Check Endpoint</strong>
+                    <div class="endpoint-url">http://a2a-connectivity-alb-x.us-east-1.elb.amazonaws.com/health</div>
+                    <a href="http://a2a-connectivity-alb-x.us-east-1.elb.amazonaws.com/health" 
+                       target="_blank" class="test-button" onclick="testEndpoint(this, 'connectivity-health')">
+                        Test Health Endpoint
+                    </a>
+                    <span id="connectivity-health-status" class="status-indicator status-unknown"></span>
+                    <span id="connectivity-health-text">Not tested</span>
+                </li>
+                
+                <li class="endpoint-item">
+                    <strong>Agent Card</strong>
+                    <div class="endpoint-url">http://a2a-connectivity-alb-x.us-east-1.elb.amazonaws.com/.well-known/agent-card.json</div>
+                    <a href="http://a2a-connectivity-alb-x.us-east-1.elb.amazonaws.com/.well-known/agent-card.json" 
+                       target="_blank" class="test-button" onclick="testEndpoint(this, 'connectivity-card')">
+                        View Agent Card
+                    </a>
+                    <span id="connectivity-card-status" class="status-indicator status-unknown"></span>
+                    <span id="connectivity-card-text">Not tested</span>
+                </li>
+                
+            </ul>
+        </div>
+
+        <div class="service-section">
+            <div class="service-title">📊 Performance Agent</div>
+            <p><strong>ALB DNS:</strong> <code>a2a-performance-alb-x.us-east-1.elb.amazonaws.com</code></p>
+            
+            <ul class="endpoint-list">
+                <li class="endpoint-item">
+                    <strong>Health Check Endpoint</strong>
+                    <div class="endpoint-url">http://a2a-performance-alb-x.us-east-1.elb.amazonaws.com/health</div>
+                    <a href="http://a2a-performance-alb-x.us-east-1.elb.amazonaws.com/health" 
+                       target="_blank" class="test-button" onclick="testEndpoint(this, 'performance-health')">
+                        Test Health Endpoint
+                    </a>
+                    <span id="performance-health-status" class="status-indicator status-unknown"></span>
+                    <span id="performance-health-text">Not tested</span>
+                </li>
+                
+                <li class="endpoint-item">
+                    <strong>Agent Card</strong>
+                    <div class="endpoint-url">http://a2a-performance-alb-x.us-east-1.elb.amazonaws.com/.well-known/agent-card.json</div>
+                    <a href="http://a2a-performance-alb-x.us-east-1.elb.amazonaws.com/.well-known/agent-card.json" 
+                       target="_blank" class="test-button" onclick="testEndpoint(this, 'performance-card')">
+                        View Agent Card
+                    </a>
+                    <span id="performance-card-status" class="status-indicator status-unknown"></span>
+                    <span id="performance-card-text">Not tested</span>
+                </li>
+                
+            </ul>
+        </div>
+
+        <div class="info-box">
+            <h3>🔧 Manual Testing Commands</h3>
+            <p>You can also test the endpoints using curl from your terminal:</p>
+            
+            <div class="curl-command">
+# Test Connectivity Agent Health
+curl -v http://a2a-connectivity-alb-x.us-east-1.elb.amazonaws.com/health
+
+# Test Performance Agent Health
+curl -v http://a2a-performance-alb-x.us-east-1.elb.amazonaws.com/health
+
+# Test Agent Cards
+curl -s http://a2a-connectivity-alb-x.us-east-1.elb.amazonaws.com/.well-known/agent-card.json | jq .
+curl -s http://a2a-performance-alb-x.us-east-1.elb.amazonaws.com/.well-known/agent-card.json | jq .
+            </div>
+        </div>
+
+        <div class="test-results" id="test-results" style="display: none;">
+            <h3>🧪 Test Results</h3>
+            <div id="results-content"></div>
+        </div>
+    </div>
+
+    <script>
+        function testEndpoint(button, testId) {
+            const statusElement = document.getElementById(testId + '-status');
+            const textElement = document.getElementById(testId + '-text');
+            const resultsDiv = document.getElementById('test-results');
+            const resultsContent = document.getElementById('results-content');
+            
+            // Show testing status
+            statusElement.className = 'status-indicator status-unknown';
+            textElement.textContent = 'Testing...';
+            
+            // The actual test will happen when the user clicks the link
+            // We'll update the status based on whether the page loads
+            setTimeout(() => {
+                statusElement.className = 'status-indicator status-success';
+                textElement.textContent = 'Link clicked - check new tab';
+                
+                // Show results section
+                resultsDiv.style.display = 'block';
+                resultsContent.innerHTML += `
+                    <p><strong>${new Date().toLocaleTimeString()}:</strong> 
+                    Tested ${testId} - Link opened in new tab</p>
+                `;
+            }, 500);
+        }
+
+        // Auto-test endpoints when page loads
+        window.addEventListener('load', function() {
+            console.log('A2A ALB Access Guide loaded');
+            console.log('Both ALBs are active with healthy targets');
+            console.log('Connectivity ALB: a2a-connectivity-alb-x.us-east-1.elb.amazonaws.com');
+            console.log('Performance ALB: a2a-performance-alb-x.us-east-1.elb.amazonaws.com');
+        });
+    </script>
+</body>
+</html>

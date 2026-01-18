@@ -1,0 +1,23 @@
+graph TD
+    A[analyze_vpc_flow_metrics] --> B{Parse time_range}
+    B --> C[Calculate start_time & end_time]
+    C --> D[Get CloudWatch Metrics]
+    D --> E{AZ specified?}
+    E -->|Yes| F[Get Subnets in AZ]
+    E -->|No| G[Skip Subnet Analysis]
+    F --> H[Check Existing Flow Logs]
+    G --> H
+    H --> I[Generate Recommendations]
+    I --> J{Success?}
+    J -->|Yes| K[Return Success Response]
+    J -->|No| L[Return Error Response]
+    
+    subgraph "AWS Services Used"
+        M[CloudWatch get_metric_statistics]
+        N[EC2 describe_subnets]
+        O[EC2 describe_flow_logs]
+    end
+    
+    D --> M
+    F --> N
+    H --> O

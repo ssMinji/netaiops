@@ -1,0 +1,10 @@
+strands-agents
+strands-agents-tools
+requests
+PyYAML
+fastmcp
+pydantic
+bedrock-agentcore
+bedrock-agentcore-starter-toolkit
+botocore
+boto3

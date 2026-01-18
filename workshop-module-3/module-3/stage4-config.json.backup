@@ -1,0 +1,35 @@
+{
+  "stack_name": "baseline-infrastructure-stack",
+  "region": "us-east-1",
+  "website_url": "http://baseline-frontend-alb-1761112383.us-east-1.elb.amazonaws.com",
+  "alb_dns_name": "baseline-frontend-alb-1761112383.us-east-1.elb.amazonaws.com",
+  "frontend_lambda_arn": "arn:aws:lambda:us-east-1:556284688887:function:baseline-infrastructure-stack-frontend-lambda-auto-generated",
+  "websocket_lambda_arn": "arn:aws:lambda:us-east-1:556284688887:function:baseline-infrastructure-stack-websocket-lambda-auto-generated",
+  "frontend_assets_bucket": "baseline-infrastructure-stack-frontend-assets-556284688887",
+  "deploy_bucket_name": "baseline-infrastructure-stack-deploy-556284688887",
+  "deploy_bucket_arn": "arn:aws:s3:::baseline-infrastructure-stack-deploy-556284688887",
+  "baseline_bucket": "",
+  "vpc_id": "vpc-09d124c097cc71acf",
+  "ec2_instance_id": "i-0688f5ab611a3cf4b",
+  "deployment_timestamp": "20250916-053737",
+  "allowed_ips": "72.21.196.65/32",
+  "status": "active",
+  "stage": "baseline",
+  "agentcore_troubleshooting": {
+    "machine_client_id": "6uvpf366bfim812oh63v129eml",
+    "cognito_provider": "a2a-troubleshooting-connectivity-994309951657",
+    "cognito_auth_scope": "netops-a2a-server-7c53ea10/gateway:read netops-a2a-server-7c53ea10/gateway:write",
+    "cognito_discovery_url": "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_lHdtb3X0I/.well-known/openid-configuration",
+    "runtime_arn": "arn:aws:bedrock-agentcore:us-east-1:994309951657:runtime/a2a_troubleshooting_agent_runtime-si1KrHHRxl",
+    "alb_dns": "a2a-connectivity-alb-1837049109.us-east-1.elb.amazonaws.com"
+  },
+  "agentcore_log_analytics": {
+    "machine_client_id": "4lclorheqepnclb4pcoq3m4p6v",
+    "cognito_provider": "a2a-performance-104398007905-4d8b8430",
+    "cognito_auth_scope": "netops-a2a-server-4d8b8430/gateway:read netops-a2a-server-4d8b8430/gateway:write",
+    "cognito_discovery_url": "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_73tlOpPdj/.well-known/openid-configuration"
+  },
+  "agentcore_performance": {
+    "runtime_arn": "arn:aws:bedrock-agentcore:us-east-1:104398007905:runtime/a2a_performance_agent_runtime-4LQWOJ2bmE"
+  }
+}

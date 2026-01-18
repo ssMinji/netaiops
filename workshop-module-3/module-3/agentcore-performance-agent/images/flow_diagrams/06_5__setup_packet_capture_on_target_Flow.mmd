@@ -1,0 +1,40 @@
+graph TD
+    A[_setup_packet_capture_on_target] --> B[Generate Installation Script]
+    B --> C[Create Capture Script]
+    C --> D[Create Analysis Script]
+    D --> E[Create Systemd Service]
+    E --> F[Execute via SSM]
+    F --> G[Wait for Command Start]
+    G --> H[Get Command Status]
+    H --> I[Return Installation Results]
+    
+    subgraph "Generated Scripts"
+        J[System Update & Tool Installation]
+        K[Continuous Capture Script]
+        L[Daily Analysis Script]
+        M[Systemd Service Configuration]
+    end
+    
+    subgraph "Tools Installed"
+        N[tcpdump]
+        O[wireshark-cli]
+        P[suricata]
+        Q[AWS CLI for S3 sync]
+    end
+    
+    B --> J
+    C --> K
+    D --> L
+    E --> M
+    J --> N
+    J --> O
+    J --> P
+    K --> Q
+    
+    subgraph "AWS Services Used"
+        R[SSM send_command]
+        S[SSM get_command_invocation]
+    end
+    
+    F --> R
+    H --> S
