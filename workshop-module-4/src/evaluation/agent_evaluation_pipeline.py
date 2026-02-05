@@ -1,10 +1,41 @@
 """
-AgentCore Agent Evaluation Pipeline
+=============================================================================
+AgentCore Agent Evaluation Pipeline (Workshop Module 4)
+AgentCore 에이전트 평가 파이프라인 (워크샵 모듈 4)
+=============================================================================
 
-This module implements the comprehensive LLM-as-a-Judge evaluation framework for AgentCore agents.
-Uses dynamic configuration instead of hardcoded values.
+Description (설명):
+    This module implements the comprehensive LLM-as-a-Judge evaluation
+    framework for AgentCore agents. Uses dynamic configuration.
+    이 모듈은 AgentCore 에이전트를 위한 포괄적인 LLM-as-a-Judge
+    평가 프레임워크를 구현합니다. 동적 설정을 사용합니다.
+
+Evaluation Dimensions (평가 차원):
+    1. Helpfulness (도움 정도) - 25%
+    2. Accuracy (정확성) - 25%
+    3. Clarity (명확성) - 20%
+    4. Professionalism (전문성) - 15%
+    5. Completeness (완전성) - 15%
+
+Features (기능):
+    - 40+ comprehensive test scenarios (40개 이상의 포괄적 테스트 시나리오)
+    - CloudWatch tool detection (3-layer) (CloudWatch 도구 감지 - 3계층)
+    - LLM-based response quality scoring (LLM 기반 응답 품질 점수)
+    - HTML report generation (HTML 보고서 생성)
+    - Consent validation for fix actions (수정 작업 동의 검증)
+
+Environment Variables (환경변수):
+    BEDROCK_MODEL_ID: Override default Claude model for evaluation
+                      평가용 기본 Claude 모델 오버라이드
+
+Author: NetAIOps Team
+Module: workshop-module-4
+=============================================================================
 """
 
+# =============================================================================
+# Standard Library Imports (표준 라이브러리 임포트)
+# =============================================================================
 import asyncio
 import boto3
 import json
@@ -16,7 +47,11 @@ from datetime import datetime, timedelta
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Any
 
-# 기본 모델 ID (환경변수로 오버라이드 가능)
+# =============================================================================
+# Default Configuration (기본 설정)
+# =============================================================================
+# Default model ID for LLM Judge - Supports env var override
+# LLM Judge용 기본 모델 ID - 환경변수 오버라이드 지원
 DEFAULT_MODEL_ID = "global.anthropic.claude-opus-4-5-20251101-v1:0"
 
 # Import AgentCore client and configuration loader

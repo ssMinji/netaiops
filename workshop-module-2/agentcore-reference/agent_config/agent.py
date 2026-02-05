@@ -1,20 +1,67 @@
-from .memory_hook_provider import MemoryHook
-from .utils import get_ssm_parameter
-from mcp.client.streamable_http import streamablehttp_client
-from strands import Agent
-from strands_tools import current_time
-from strands.models import BedrockModel
-from strands.tools.mcp import MCPClient
+"""
+=============================================================================
+Memory-Enhanced TroubleshootingAgent (Module 2)
+메모리 강화 TroubleshootingAgent (모듈 2)
+=============================================================================
+
+Description (설명):
+    This module extends the base troubleshooting agent with a 3-tier memory
+    system for context persistence across sessions.
+    이 모듈은 세션 간 컨텍스트 유지를 위한 3계층 메모리 시스템으로
+    기본 문제 해결 에이전트를 확장합니다.
+
+Memory Tiers (메모리 계층):
+    - Semantic Memory (365 days): Platform knowledge, SOPs
+      시맨틱 메모리 (365일): 플랫폼 지식, SOP
+    - Summary Memory (Session): Analysis results, PathIDs
+      요약 메모리 (세션): 분석 결과, PathID
+    - User Preference Memory (90 days): Communication style, preferences
+      사용자 선호도 메모리 (90일): 커뮤니케이션 스타일, 선호도
+
+Environment Variables (환경변수):
+    BEDROCK_MODEL_ID: Override default Claude model
+                      기본 Claude 모델 오버라이드
+
+Author: NetAIOps Team
+Module: workshop-module-2
+=============================================================================
+"""
+
+# =============================================================================
+# Imports (임포트)
+# =============================================================================
+from .memory_hook_provider import MemoryHook          # Memory hook for 3-tier persistence (3계층 유지용 메모리 훅)
+from .utils import get_ssm_parameter                  # SSM parameter retrieval (SSM 파라미터 조회)
+from mcp.client.streamable_http import streamablehttp_client  # MCP HTTP client (MCP HTTP 클라이언트)
+from strands import Agent                             # Strands AI Agent framework (Strands AI 에이전트 프레임워크)
+from strands_tools import current_time                # Time utility tool (시간 유틸리티 도구)
+from strands.models import BedrockModel               # Bedrock model wrapper (Bedrock 모델 래퍼)
+from strands.tools.mcp import MCPClient               # MCP client for tool integration (도구 통합용 MCP 클라이언트)
 import logging
 import os
 
+# Configure module logger (모듈 로거 설정)
 logger = logging.getLogger(__name__)
 
-# 기본 모델 ID (환경변수로 오버라이드 가능)
+# =============================================================================
+# Default Configuration (기본 설정)
+# =============================================================================
+# Default model ID - Can be overridden via BEDROCK_MODEL_ID environment variable
+# 기본 모델 ID - BEDROCK_MODEL_ID 환경변수로 오버라이드 가능
 DEFAULT_MODEL_ID = "global.anthropic.claude-opus-4-5-20251101-v1:0"
 
 
 class TroubleshootingAgent:
+    """
+    Memory-enhanced AI network troubleshooting agent.
+    메모리 강화 AI 네트워크 문제 해결 에이전트.
+
+    Extends basic troubleshooting with 3-tier memory system for
+    persistent context and learning across sessions.
+    세션 간 지속적인 컨텍스트와 학습을 위해
+    3계층 메모리 시스템으로 기본 문제 해결을 확장합니다.
+    """
+
     def __init__(
         self,
         bearer_token: str,
@@ -22,13 +69,33 @@ class TroubleshootingAgent:
         bedrock_model_id: str = None,
         system_prompt: str = None,
     ):
-        # 환경변수 > 파라미터 > 기본값 순으로 모델 ID 결정
+        """
+        Initialize the Memory-Enhanced TroubleshootingAgent.
+        메모리 강화 TroubleshootingAgent 초기화.
+
+        Args (인자):
+            bearer_token (str): Authentication token for MCP gateway
+                               MCP 게이트웨이 인증 토큰
+            memory_hook (MemoryHook, optional): 3-tier memory hook
+                                               3계층 메모리 훅
+            bedrock_model_id (str, optional): Override model ID
+                                             모델 ID 오버라이드
+            system_prompt (str, optional): Custom system prompt
+                                          사용자 정의 시스템 프롬프트
+        """
+        # Determine model ID with priority: env var > parameter > default
+        # 우선순위에 따라 모델 ID 결정: 환경변수 > 파라미터 > 기본값
         if bedrock_model_id is None:
             bedrock_model_id = os.environ.get('BEDROCK_MODEL_ID', DEFAULT_MODEL_ID)
+
         self.model_id = bedrock_model_id
+
+        # Initialize Bedrock model (Bedrock 모델 초기화)
         self.model = BedrockModel(
             model_id=self.model_id,
         )
+
+        # Store memory hook for 3-tier memory system (3계층 메모리 시스템용 메모리 훅 저장)
         self.memory_hook = memory_hook
         
         self.system_prompt = (

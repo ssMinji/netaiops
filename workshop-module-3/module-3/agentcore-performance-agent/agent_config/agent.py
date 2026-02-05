@@ -1,23 +1,72 @@
-from .memory_hook_provider import MemoryHookProvider
-from .utils import get_ssm_parameter
-from mcp.client.streamable_http import streamablehttp_client
-from strands import Agent
-from strands_tools import current_time
-from strands.models import BedrockModel
-from strands.tools.mcp import MCPClient
-from bedrock_agentcore.memory import MemoryClient
+"""
+=============================================================================
+Performance Agent - Network Performance Analysis (Module 3 - A2A)
+Performance Agent - 네트워크 성능 분석 (모듈 3 - A2A)
+=============================================================================
+
+Description (설명):
+    Specialized agent for network performance monitoring and analysis
+    within the A2A (Agent-to-Agent) collaboration framework.
+    A2A (에이전트 간) 협업 프레임워크 내에서 네트워크 성능 모니터링 및
+    분석을 위한 전문 에이전트입니다.
+
+Capabilities (기능):
+    - PCAP packet analysis (PCAP 패킷 분석)
+    - Network flow monitoring (네트워크 플로우 모니터링)
+    - Latency analysis and detection (지연 분석 및 감지)
+    - Throughput measurement (처리량 측정)
+    - CloudWatch metrics integration (CloudWatch 메트릭 통합)
+
+A2A Integration (A2A 통합):
+    This agent can be invoked by the Host/Collaborator agent for
+    performance-specific tasks in multi-agent workflows.
+    이 에이전트는 다중 에이전트 워크플로우에서 성능 관련 작업을 위해
+    Host/Collaborator 에이전트에 의해 호출될 수 있습니다.
+
+Environment Variables (환경변수):
+    BEDROCK_MODEL_ID: Override default Claude model
+                      기본 Claude 모델 오버라이드
+
+Author: NetAIOps Team
+Module: workshop-module-3 (agentcore-performance-agent)
+=============================================================================
+"""
+
+# =============================================================================
+# Imports (임포트)
+# =============================================================================
+from .memory_hook_provider import MemoryHookProvider  # Memory hook provider (메모리 훅 프로바이더)
+from .utils import get_ssm_parameter                  # SSM parameter retrieval (SSM 파라미터 조회)
+from mcp.client.streamable_http import streamablehttp_client  # MCP HTTP client
+from strands import Agent                             # Strands AI Agent framework
+from strands_tools import current_time                # Time utility tool (시간 유틸리티)
+from strands.models import BedrockModel               # Bedrock model wrapper
+from strands.tools.mcp import MCPClient               # MCP client for tools
+from bedrock_agentcore.memory import MemoryClient     # AgentCore memory client
 import logging
 import boto3
 import os
 
+# Configure module logger (모듈 로거 설정)
 logger = logging.getLogger(__name__)
 
-# 기본 모델 ID (환경변수로 오버라이드 가능)
+# =============================================================================
+# Default Configuration (기본 설정)
+# =============================================================================
+# Default model ID - Supports env var override for flexibility
+# 기본 모델 ID - 유연성을 위해 환경변수 오버라이드 지원
 DEFAULT_MODEL_ID = "global.anthropic.claude-opus-4-5-20251101-v1:0"
 
 
 def get_aws_account_id():
-    """Get the current AWS account ID from the session"""
+    """
+    Get the current AWS account ID from the session.
+    세션에서 현재 AWS 계정 ID 가져오기.
+
+    Returns (반환값):
+        str: AWS account ID or None if unavailable
+             AWS 계정 ID 또는 사용 불가 시 None
+    """
     try:
         sts = boto3.client('sts')
         response = sts.get_caller_identity()
@@ -28,6 +77,16 @@ def get_aws_account_id():
 
 
 class PerformanceAgent:
+    """
+    Performance-focused analysis agent for A2A collaboration.
+    A2A 협업을 위한 성능 중심 분석 에이전트.
+
+    Handles PCAP analysis, flow monitoring, and latency detection
+    as part of multi-agent troubleshooting workflows.
+    다중 에이전트 문제 해결 워크플로우의 일부로
+    PCAP 분석, 플로우 모니터링, 지연 감지를 처리합니다.
+    """
+
     def __init__(
         self,
         bearer_token: str,
@@ -37,13 +96,25 @@ class PerformanceAgent:
         actor_id: str = None,
         session_id: str = None,
     ):
-        # 환경변수 > 파라미터 > 기본값 순으로 모델 ID 결정
+        """
+        Initialize the Performance Agent.
+        Performance Agent 초기화.
+
+        Args (인자):
+            bearer_token (str): Auth token for MCP gateway (MCP 게이트웨이 인증 토큰)
+            memory_hook_provider (MemoryHookProvider): Memory hook provider (메모리 훅 프로바이더)
+            bedrock_model_id (str): Override model ID (모델 ID 오버라이드)
+            system_prompt (str): Custom system prompt (사용자 정의 시스템 프롬프트)
+            actor_id (str): Actor identifier for sessions (세션용 액터 식별자)
+            session_id (str): Session identifier (세션 식별자)
+        """
+        # Model ID priority: env var > parameter > default
+        # 모델 ID 우선순위: 환경변수 > 파라미터 > 기본값
         if bedrock_model_id is None:
             bedrock_model_id = os.environ.get('BEDROCK_MODEL_ID', DEFAULT_MODEL_ID)
+
         self.model_id = bedrock_model_id
-        self.model = BedrockModel(
-            model_id=self.model_id,
-        )
+        self.model = BedrockModel(model_id=self.model_id)
         self.memory_hook_provider = memory_hook_provider
         
         # Get AWS account ID from session

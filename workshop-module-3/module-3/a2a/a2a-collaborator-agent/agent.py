@@ -1,6 +1,50 @@
-# This is the host agent that is responsible for understanding the other
-# agents in the ecosystem and then invoking the agent that is the most relevant to this
-# use case using Strands and BedrockAgentCoreApp
+"""
+=============================================================================
+A2A Host/Collaborator Agent - Multi-Agent Orchestration (Module 3)
+A2A Host/Collaborator Agent - 다중 에이전트 오케스트레이션 (모듈 3)
+=============================================================================
+
+Description (설명):
+    This is the Host/Collaborator agent that orchestrates multiple specialized
+    agents in the A2A (Agent-to-Agent) collaboration framework.
+    이것은 A2A (에이전트 간) 협업 프레임워크에서 여러 전문 에이전트를
+    오케스트레이션하는 Host/Collaborator 에이전트입니다.
+
+Architecture (아키텍처):
+    ┌─────────────────────────────────────────┐
+    │     User Request (사용자 요청)            │
+    └──────────────────┬──────────────────────┘
+                       │
+              ┌────────▼────────┐
+              │  Host Agent     │  ← This module (이 모듈)
+              │  (Orchestrator) │
+              └────────┬────────┘
+                       │
+         ┌─────────────┼─────────────┐
+         │             │             │
+    ┌────▼────┐   ┌────▼────┐   ┌────▼────┐
+    │Connectivity│ │Performance│ │  Other   │
+    │  Agent   │   │  Agent   │   │ Agents  │
+    └──────────┘   └──────────┘   └─────────┘
+
+Capabilities (기능):
+    - Intelligent request routing (지능형 요청 라우팅)
+    - Parallel agent invocation (병렬 에이전트 호출)
+    - Response aggregation and synthesis (응답 집계 및 종합)
+    - Rate limiting and error handling (속도 제한 및 오류 처리)
+
+Environment Variables (환경변수):
+    BEDROCK_MODEL_ID: Override default Claude model
+                      기본 Claude 모델 오버라이드
+
+Author: NetAIOps Team
+Module: workshop-module-3 (a2a-collaborator-agent)
+=============================================================================
+"""
+
+# =============================================================================
+# Standard Library Imports (표준 라이브러리 임포트)
+# =============================================================================
 import yaml
 import asyncio
 import json
@@ -12,39 +56,51 @@ from typing import Any, AsyncIterable, List, Dict, Optional
 from pathlib import Path
 from asyncio import Semaphore
 
-import httpx
-import nest_asyncio
-from a2a.client import A2ACardResolver
-# These are the A2A types for communication
+# =============================================================================
+# Third-Party Imports (서드파티 임포트)
+# =============================================================================
+import httpx                                          # Async HTTP client (비동기 HTTP 클라이언트)
+import nest_asyncio                                   # Nested event loop support (중첩 이벤트 루프 지원)
+from a2a.client import A2ACardResolver                # A2A agent card resolver
+
+# A2A types for agent-to-agent communication
+# 에이전트 간 통신을 위한 A2A 타입
 from a2a.types import (
-    AgentCard, 
-    MessageSendParams, 
-    SendMessageRequest, 
-    SendMessageResponse, 
-    SendMessageSuccessResponse, 
-    Task,
+    AgentCard,                   # Agent capability card (에이전트 기능 카드)
+    MessageSendParams,           # Message parameters (메시지 파라미터)
+    SendMessageRequest,          # Request structure (요청 구조)
+    SendMessageResponse,         # Response structure (응답 구조)
+    SendMessageSuccessResponse,  # Success response (성공 응답)
+    Task,                        # Task definition (태스크 정의)
 )
 
-# Strands and BedrockAgentCore imports
-from strands import Agent
-from strands.models import BedrockModel
-from strands_tools import current_time
-from strands.tools import tool
-from bedrock_agentcore.runtime import BedrockAgentCoreApp
-from bedrock_agentcore.memory import MemoryClient
+# =============================================================================
+# Strands and BedrockAgentCore Imports
+# Strands 및 BedrockAgentCore 임포트
+# =============================================================================
+from strands import Agent                             # Strands AI Agent framework
+from strands.models import BedrockModel               # Bedrock model wrapper
+from strands_tools import current_time                # Time utility tool
+from strands.tools import tool                        # Tool decorator
+from bedrock_agentcore.runtime import BedrockAgentCoreApp  # AgentCore runtime
+from bedrock_agentcore.memory import MemoryClient     # Memory client
 import logging
 
-# import the remote agent connection
+# =============================================================================
+# Local Module Imports (로컬 모듈 임포트)
+# =============================================================================
+# Support both relative and absolute imports for flexibility
+# 유연성을 위해 상대 및 절대 임포트 모두 지원
 try:
-    # Try relative imports first (when run as module)
-    from .remote_agent_connection import RemoteAgentConnections
-    from .context import HostAgentContext
-    from .memory_hook_provider import HostMemoryHook
-    from .streaming_queue import HostStreamingQueue
-    from .utils import get_ssm_parameter
-    from .access_token import get_gateway_access_token
+    # Relative imports (when run as module) - 상대 임포트 (모듈로 실행 시)
+    from .remote_agent_connection import RemoteAgentConnections  # Remote agent connections (원격 에이전트 연결)
+    from .context import HostAgentContext                        # Host agent context (호스트 에이전트 컨텍스트)
+    from .memory_hook_provider import HostMemoryHook             # Memory hook (메모리 훅)
+    from .streaming_queue import HostStreamingQueue              # Streaming queue (스트리밍 큐)
+    from .utils import get_ssm_parameter                         # SSM parameter utility (SSM 파라미터 유틸리티)
+    from .access_token import get_gateway_access_token           # Token retrieval (토큰 조회)
 except ImportError:
-    # Fall back to absolute imports (when run as script)
+    # Absolute imports (when run as script) - 절대 임포트 (스크립트로 실행 시)
     from remote_agent_connection import RemoteAgentConnections
     from context import HostAgentContext
     from memory_hook_provider import HostMemoryHook
@@ -52,15 +108,28 @@ except ImportError:
     from utils import get_ssm_parameter
     from access_token import get_gateway_access_token
 
-# Environment flags
+# =============================================================================
+# Environment Configuration (환경 설정)
+# =============================================================================
 import os
+
+# Enable OpenTelemetry console export for debugging
+# 디버깅을 위한 OpenTelemetry 콘솔 내보내기 활성화
 os.environ["STRANDS_OTEL_ENABLE_CONSOLE_EXPORT"] = "true"
 os.environ["STRANDS_TOOL_CONSOLE_MODE"] = "enabled"
 
-# 기본 모델 ID (환경변수로 오버라이드 가능)
+# =============================================================================
+# Default Configuration (기본 설정)
+# =============================================================================
+# Default model ID - Supports env var override for flexibility
+# 기본 모델 ID - 유연성을 위해 환경변수 오버라이드 지원
 DEFAULT_MODEL_ID = "global.anthropic.claude-opus-4-5-20251101-v1:0"
 
-# Enhanced logging setup for troubleshooting
+# =============================================================================
+# Logging Configuration (로깅 설정)
+# =============================================================================
+# Enhanced logging for troubleshooting multi-agent communication
+# 다중 에이전트 통신 문제 해결을 위한 향상된 로깅
 logging.basicConfig(
     level=logging.DEBUG,
     format='%(asctime)s - %(name)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s'
@@ -68,14 +137,23 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
-# Also set httpx logging to debug
+# Enable httpx logging for HTTP debugging (HTTP 디버깅을 위한 httpx 로깅 활성화)
 httpx_logger = logging.getLogger("httpx")
 httpx_logger.setLevel(logging.DEBUG)
 
+# Apply nested asyncio for uvicorn compatibility
+# uvicorn 호환성을 위한 중첩 asyncio 적용
 nest_asyncio.apply()
 
+
 def load_config() -> dict:
-    """Load configuration from config.yaml file."""
+    """
+    Load configuration from YAML file.
+    YAML 파일에서 설정 로드.
+
+    Returns (반환값):
+        dict: Configuration dictionary (설정 딕셔너리)
+    """
     config_path = Path(__file__).parent / 'main_agent.yaml'
     try:
         with open(config_path, 'r') as f:

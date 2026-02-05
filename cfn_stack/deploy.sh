@@ -1,47 +1,100 @@
 #!/bin/bash
 #
+# =============================================================================
+# NetAIOps CloudFormation Stack Deployment Script
 # NetAIOps CloudFormation 스택 배포 스크립트
-# S3 버킷을 사용하여 대용량 템플릿을 배포합니다.
-# 사용법: ./deploy.sh [command] [options]
+# =============================================================================
 #
+# Description (설명):
+#   This script deploys NetAIOps infrastructure using CloudFormation with S3.
+#   S3 버킷을 사용하여 대용량 CloudFormation 템플릿을 배포합니다.
+#
+# Features (기능):
+#   - Interactive region selection (대화형 리전 선택)
+#   - Interactive model selection: Opus 4.5 / Sonnet 4 (대화형 모델 선택)
+#   - Configuration persistence in .deploy-config (설정 파일 저장)
+#   - S3-based large template deployment (S3 기반 대용량 템플릿 배포)
+#
+# Usage (사용법): ./deploy.sh [command] [options]
+#
+# Author: NetAIOps Team
+# =============================================================================
 
+# Exit on error (오류 발생 시 스크립트 종료)
 set -e
 
-# 색상 정의
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-CYAN='\033[0;36m'
-NC='\033[0m' # No Color
+# =============================================================================
+# Color Definitions for Terminal Output
+# 터미널 출력용 색상 정의
+# =============================================================================
+RED='\033[0;31m'      # Error messages (오류 메시지)
+GREEN='\033[0;32m'    # Success messages (성공 메시지)
+YELLOW='\033[1;33m'   # Warning messages (경고 메시지)
+BLUE='\033[0;34m'     # Info messages (정보 메시지)
+CYAN='\033[0;36m'     # Step messages (단계 메시지)
+NC='\033[0m'          # No Color - Reset (색상 초기화)
 
-# 기본 설정
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONFIG_FILE="${SCRIPT_DIR}/.deploy-config"
-AWS_REGION=""
-AWS_ACCOUNT_ID=""
-S3_BUCKET_NAME=""
-S3_PREFIX="netaiops-cfn-templates"
+# =============================================================================
+# Global Configuration Variables
+# 전역 설정 변수
+# =============================================================================
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"  # Script directory (스크립트 디렉토리)
+CONFIG_FILE="${SCRIPT_DIR}/.deploy-config"                   # Config file path (설정 파일 경로)
+AWS_REGION=""                                                # AWS region (AWS 리전)
+AWS_ACCOUNT_ID=""                                            # AWS account ID (AWS 계정 ID)
+S3_BUCKET_NAME=""                                            # S3 bucket for templates (템플릿용 S3 버킷)
+S3_PREFIX="netaiops-cfn-templates"                           # S3 prefix for templates (S3 프리픽스)
 
-# 지원하는 리전 목록 (Bedrock AgentCore 지원 리전)
+# =============================================================================
+# Supported AWS Regions (Bedrock AgentCore Available Regions)
+# 지원 AWS 리전 (Bedrock AgentCore 사용 가능 리전)
+# =============================================================================
 SUPPORTED_REGIONS=("us-east-1" "us-west-2" "eu-west-1" "ap-northeast-1" "ap-southeast-1")
 
-# 지원하는 모델 목록
+# =============================================================================
+# Supported Claude Models
+# 지원 Claude 모델
+# =============================================================================
+# Model ID will be set by user selection or environment variable
+# 모델 ID는 사용자 선택 또는 환경변수로 설정됨
 BEDROCK_MODEL_ID=""
+
+# Associative array mapping model names to full model IDs
+# 모델 이름을 전체 모델 ID에 매핑하는 연관 배열
 declare -A SUPPORTED_MODELS=(
-    ["opus-4.5"]="global.anthropic.claude-opus-4-5-20251101-v1:0"
-    ["sonnet-4"]="global.anthropic.claude-sonnet-4-20250514-v1:0"
+    ["opus-4.5"]="global.anthropic.claude-opus-4-5-20251101-v1:0"   # Best performance (최고 성능)
+    ["sonnet-4"]="global.anthropic.claude-sonnet-4-20250514-v1:0"   # Fast & cost-effective (빠르고 비용 효율적)
 )
+
+# Ordered list of model names for menu display
+# 메뉴 표시용 모델 이름 순서 목록
 MODEL_NAMES=("opus-4.5" "sonnet-4")
 
-# 함수: 설정 파일에서 리전 로드
+# =============================================================================
+# Configuration Management Functions
+# 설정 관리 함수
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# load_config: Load settings from config file
+# load_config: 설정 파일에서 설정 로드
+# -----------------------------------------------------------------------------
+# Loads AWS_REGION and BEDROCK_MODEL_ID from .deploy-config if exists
+# .deploy-config 파일이 존재하면 AWS_REGION과 BEDROCK_MODEL_ID를 로드
+# -----------------------------------------------------------------------------
 load_config() {
     if [ -f "$CONFIG_FILE" ]; then
         source "$CONFIG_FILE"
     fi
 }
 
-# 함수: 설정 파일에 설정 저장
+# -----------------------------------------------------------------------------
+# save_config: Save current settings to config file
+# save_config: 현재 설정을 설정 파일에 저장
+# -----------------------------------------------------------------------------
+# Persists AWS_REGION and BEDROCK_MODEL_ID for future deployments
+# 향후 배포를 위해 AWS_REGION과 BEDROCK_MODEL_ID를 저장
+# -----------------------------------------------------------------------------
 save_config() {
     cat > "$CONFIG_FILE" << EOF
 AWS_REGION="$AWS_REGION"
@@ -50,34 +103,51 @@ EOF
     log_info "설정이 저장되었습니다: $CONFIG_FILE"
 }
 
-# 함수: 리전 선택 프롬프트
+# =============================================================================
+# Region Selection Functions
+# 리전 선택 함수
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# prompt_region: Display interactive region selection menu
+# prompt_region: 대화형 리전 선택 메뉴 표시
+# -----------------------------------------------------------------------------
+# Shows numbered list of supported regions for user selection
+# 사용자 선택을 위한 지원 리전 번호 목록 표시
+# -----------------------------------------------------------------------------
 prompt_region() {
     echo ""
     log_info "AWS 리전을 선택하세요 (Bedrock AgentCore 지원 리전):"
     echo ""
 
+    # Display each region with number (각 리전을 번호와 함께 표시)
     local i=1
     for region in "${SUPPORTED_REGIONS[@]}"; do
         if [ "$region" = "us-east-1" ]; then
-            echo "  $i) $region (기본값, 권장)"
+            echo "  $i) $region (기본값, 권장)"  # Default and recommended
         else
             echo "  $i) $region"
         fi
         ((i++))
     done
-    echo "  $i) 직접 입력"
+    echo "  $i) 직접 입력"  # Custom input option (직접 입력 옵션)
     echo ""
 
+    # Get user selection (사용자 선택 받기)
     read -p "선택 [1-$i] (기본값: 1): " choice
-    choice="${choice:-1}"
+    choice="${choice:-1}"  # Default to 1 if empty (빈 값이면 기본값 1)
 
+    # Process selection (선택 처리)
     if [[ "$choice" =~ ^[0-9]+$ ]]; then
         if [ "$choice" -ge 1 ] && [ "$choice" -le ${#SUPPORTED_REGIONS[@]} ]; then
+            # Valid region selection (유효한 리전 선택)
             AWS_REGION="${SUPPORTED_REGIONS[$((choice-1))]}"
         elif [ "$choice" -eq $i ]; then
+            # Custom region input (사용자 정의 리전 입력)
             read -p "리전 입력 (예: ap-northeast-2): " custom_region
             AWS_REGION="${custom_region:-us-east-1}"
         else
+            # Invalid selection, use default (잘못된 선택, 기본값 사용)
             AWS_REGION="us-east-1"
         fi
     else
@@ -87,45 +157,72 @@ prompt_region() {
     log_success "선택된 리전: $AWS_REGION"
 }
 
-# 함수: 리전 확인 및 설정
+# -----------------------------------------------------------------------------
+# ensure_region: Ensure AWS region is set (priority-based)
+# ensure_region: AWS 리전이 설정되었는지 확인 (우선순위 기반)
+# -----------------------------------------------------------------------------
+# Priority (우선순위):
+#   1. CLI option --region (명령줄 옵션)
+#   2. Environment variable AWS_REGION (환경변수)
+#   3. Config file .deploy-config (설정 파일)
+#   4. Interactive prompt (대화형 프롬프트)
+# -----------------------------------------------------------------------------
 ensure_region() {
-    # 1. 명령줄 옵션으로 이미 설정된 경우 사용
+    # 1. Already set via CLI option (명령줄 옵션으로 이미 설정된 경우)
     if [ -n "$AWS_REGION" ]; then
         return
     fi
 
-    # 2. 환경변수 확인
+    # 2. Check environment variable (환경변수 확인)
     if [ -n "${AWS_REGION_ENV:-}" ]; then
         AWS_REGION="$AWS_REGION_ENV"
         return
     fi
 
-    # 3. 설정 파일에서 로드
+    # 3. Load from config file (설정 파일에서 로드)
     load_config
     if [ -n "$AWS_REGION" ]; then
         log_info "저장된 리전 사용: $AWS_REGION"
         return
     fi
 
-    # 4. 대화형 프롬프트
+    # 4. Show interactive prompt (대화형 프롬프트 표시)
     prompt_region
 
+    # Region saving is handled after model selection
     # 리전 저장은 모델 선택 후 함께 처리
 }
 
-# 함수: 모델 선택 프롬프트
+# =============================================================================
+# Model Selection Functions
+# 모델 선택 함수
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# prompt_model: Display interactive model selection menu
+# prompt_model: 대화형 모델 선택 메뉴 표시
+# -----------------------------------------------------------------------------
+# Shows available Claude models with their characteristics
+# 사용 가능한 Claude 모델과 특성 표시
+# -----------------------------------------------------------------------------
 prompt_model() {
     echo ""
     log_info "Claude 모델을 선택하세요:"
     echo ""
 
+    # Display each model with number and description
+    # 각 모델을 번호와 설명과 함께 표시
     local i=1
     for model_name in "${MODEL_NAMES[@]}"; do
         local model_id="${SUPPORTED_MODELS[$model_name]}"
         if [ "$model_name" = "opus-4.5" ]; then
+            # Opus 4.5: Best performance, recommended for complex tasks
+            # Opus 4.5: 최고 성능, 복잡한 작업에 권장
             echo "  $i) $model_name (기본값, 최고 성능)"
             echo "     → $model_id"
         else
+            # Sonnet 4: Fast response, cost-effective
+            # Sonnet 4: 빠른 응답, 비용 효율적
             echo "  $i) $model_name (빠른 응답, 비용 효율)"
             echo "     → $model_id"
         fi
@@ -133,49 +230,69 @@ prompt_model() {
     done
     echo ""
 
+    # Get user selection (사용자 선택 받기)
     read -p "선택 [1-$((i-1))] (기본값: 1): " choice
-    choice="${choice:-1}"
+    choice="${choice:-1}"  # Default to 1 (Opus 4.5)
 
+    # Process selection and set model ID (선택 처리 및 모델 ID 설정)
     if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le ${#MODEL_NAMES[@]} ]; then
         local selected_name="${MODEL_NAMES[$((choice-1))]}"
         BEDROCK_MODEL_ID="${SUPPORTED_MODELS[$selected_name]}"
     else
+        # Default to Opus 4.5 for invalid input (잘못된 입력시 Opus 4.5 기본값)
         BEDROCK_MODEL_ID="${SUPPORTED_MODELS[opus-4.5]}"
     fi
 
     log_success "선택된 모델: $BEDROCK_MODEL_ID"
 }
 
-# 함수: 모델 확인 및 설정
+# -----------------------------------------------------------------------------
+# ensure_model: Ensure Bedrock model is set (priority-based)
+# ensure_model: Bedrock 모델이 설정되었는지 확인 (우선순위 기반)
+# -----------------------------------------------------------------------------
+# Priority (우선순위):
+#   1. CLI option --model (명령줄 옵션)
+#   2. Environment variable BEDROCK_MODEL_ID (환경변수)
+#   3. Config file .deploy-config (설정 파일)
+#   4. Interactive prompt (대화형 프롬프트)
+# -----------------------------------------------------------------------------
 ensure_model() {
-    # 1. 명령줄 옵션으로 이미 설정된 경우 사용
+    # 1. Already set via CLI option (명령줄 옵션으로 이미 설정된 경우)
     if [ -n "$BEDROCK_MODEL_ID" ]; then
         return
     fi
 
-    # 2. 환경변수 확인
+    # 2. Check environment variable (환경변수 확인)
     if [ -n "${BEDROCK_MODEL_ID_ENV:-}" ]; then
         BEDROCK_MODEL_ID="$BEDROCK_MODEL_ID_ENV"
         return
     fi
 
-    # 3. 설정 파일에서 로드
+    # 3. Load from config file (설정 파일에서 로드)
     load_config
     if [ -n "$BEDROCK_MODEL_ID" ]; then
         log_info "저장된 모델 사용: $BEDROCK_MODEL_ID"
         return
     fi
 
-    # 4. 대화형 프롬프트
+    # 4. Show interactive prompt (대화형 프롬프트 표시)
     prompt_model
 }
 
-# 함수: 리전과 모델 설정 확인 및 저장
+# -----------------------------------------------------------------------------
+# ensure_settings: Ensure both region and model are configured
+# ensure_settings: 리전과 모델이 모두 설정되었는지 확인
+# -----------------------------------------------------------------------------
+# Prompts for both settings if not already configured
+# 설정되지 않은 경우 두 설정 모두 프롬프트
+# Offers to save settings for future use
+# 향후 사용을 위해 설정 저장 제안
+# -----------------------------------------------------------------------------
 ensure_settings() {
     ensure_region
     ensure_model
 
-    # 설정 저장 여부 확인 (한 번만)
+    # Ask to save settings if config file doesn't exist (설정 파일이 없으면 저장 여부 확인)
     if [ ! -f "$CONFIG_FILE" ]; then
         echo ""
         read -p "이 설정을 기본값으로 저장하시겠습니까? (Y/n): " save_choice
@@ -186,18 +303,30 @@ ensure_settings() {
     fi
 }
 
-# 스택 이름 설정
-STACK_SAMPLE_APP="netaiops-sample-app"
-STACK_NFM_ENABLE="netaiops-nfm-enable"
-STACK_NFM_SETUP="netaiops-nfm-setup"
-STACK_COGNITO="netaiops-cognito"
-STACK_MODULES="netaiops-modules"
-STACK_TRAFFIC_MIRROR="netaiops-traffic-mirror"
+# =============================================================================
+# CloudFormation Stack Names
+# CloudFormation 스택 이름
+# =============================================================================
+# Each stack represents a deployment stage of the NetAIOps infrastructure
+# 각 스택은 NetAIOps 인프라 배포 단계를 나타냄
+# =============================================================================
+STACK_SAMPLE_APP="netaiops-sample-app"        # Stage 1: Core infrastructure (핵심 인프라)
+STACK_NFM_ENABLE="netaiops-nfm-enable"        # Stage 2a: Enable Network Flow Monitor (NFM 활성화)
+STACK_NFM_SETUP="netaiops-nfm-setup"          # Stage 3: NFM agent setup (NFM 에이전트 설정)
+STACK_COGNITO="netaiops-cognito"              # Stage 2b: Cognito authentication (Cognito 인증)
+STACK_MODULES="netaiops-modules"              # Stage 2c: Module installation (모듈 설치)
+STACK_TRAFFIC_MIRROR="netaiops-traffic-mirror" # Stage 4: Traffic mirroring (트래픽 미러링)
 
-# 함수: 로그 출력
-log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
-log_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
-log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
+# =============================================================================
+# Logging Functions
+# 로깅 함수
+# =============================================================================
+# Colored output for better readability in terminal
+# 터미널에서 가독성을 높이기 위한 컬러 출력
+# =============================================================================
+log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }       # Information message (정보 메시지)
+log_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; } # Success message (성공 메시지)
+log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }     # Warning message (경고 메시지)
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 log_step() { echo -e "${CYAN}[STEP]${NC} $1"; }
 
