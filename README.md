@@ -2,9 +2,12 @@
 
 AWS Bedrock AgentCore 기반의 지능형 네트워크 트러블슈팅 및 모니터링 플랫폼입니다.
 
+> **🌐 Bilingual Documentation**: 이 프로젝트의 모든 코드에는 영어/한글 이중 언어 주석이 포함되어 있습니다.
+> All code in this project includes bilingual (English/Korean) comments for accessibility.
+
 ## 개요
 
-NetAIOps는 AI 에이전트를 활용하여 네트워크 문제를 자동으로 진단하고 해결하는 플랫폼입니다. AWS Bedrock AgentCore와 Claude Opus 4.5 모델을 기반으로 구축되었으며, 메모리 강화 에이전트, Agent-to-Agent(A2A) 협업, LLM-as-a-Judge 평가 프레임워크를 포함합니다.
+NetAIOps는 AI 에이전트를 활용하여 네트워크 문제를 자동으로 진단하고 해결하는 플랫폼입니다. AWS Bedrock AgentCore와 Claude 모델(Opus 4.5 / Sonnet 4)을 기반으로 구축되었으며, 메모리 강화 에이전트, Agent-to-Agent(A2A) 협업, LLM-as-a-Judge 평가 프레임워크를 포함합니다.
 
 ## 주요 기능
 
@@ -69,7 +72,8 @@ netaiops_v1/
 │
 ├── cfn_stack/                   # CloudFormation 인프라 템플릿
 │   ├── README.md                # CFN 스택 문서
-│   ├── deploy.sh                # 배포 스크립트
+│   ├── deploy.sh                # 배포 스크립트 (리전/모델 선택 지원)
+│   ├── .deploy-config           # 저장된 설정 (자동 생성)
 │   ├── sample-appication.yaml   # 1단계: 기본 인프라
 │   ├── network-flow-monitor-enable.yaml    # 2a단계: NFM 활성화
 │   ├── a2a-performance-agentcore-cognito.yaml  # 2b단계: Cognito
@@ -137,13 +141,72 @@ netaiops_v1/
 ```bash
 cd cfn_stack
 
-# 전체 인프라 배포
+# 전체 인프라 배포 (대화형 리전/모델 선택)
 ./deploy.sh deploy-all
+
+# 명시적 리전/모델 지정
+./deploy.sh deploy-all --region us-east-1 --model opus-4.5
 
 # 또는 개별 배포
 ./deploy.sh deploy-base        # 기본 인프라
 ./deploy.sh deploy-nfm         # Network Flow Monitor
 ./deploy.sh deploy-cognito     # Cognito 인증
+
+# 설정 확인/변경
+./deploy.sh show-config        # 전체 설정 확인
+./deploy.sh set-region         # 리전 변경
+./deploy.sh set-model          # 모델 변경
+```
+
+#### 지원 리전 (Bedrock AgentCore)
+
+| 리전 | 설명 |
+|------|------|
+| `us-east-1` | 기본값, 권장 |
+| `us-west-2` | 미국 서부 |
+| `eu-west-1` | 유럽 |
+| `ap-northeast-1` | 도쿄 |
+| `ap-southeast-1` | 싱가포르 |
+
+#### 지원 모델 (Claude)
+
+| 모델 | ID | 특성 |
+|------|-----|------|
+| **opus-4.5** | `global.anthropic.claude-opus-4-5-20251101-v1:0` | 최고 성능, 기본값 |
+| **sonnet-4** | `global.anthropic.claude-sonnet-4-20250514-v1:0` | 빠른 응답, 비용 효율 |
+
+### 배포 스크립트 명령어 (deploy.sh)
+
+```bash
+# 배포 명령
+./deploy.sh deploy-all          # 모든 스택 순차 배포
+./deploy.sh deploy-base         # 기본 인프라만 배포
+./deploy.sh deploy-nfm          # Network Flow Monitor 배포
+./deploy.sh deploy-cognito      # Cognito 인증 스택 배포
+./deploy.sh deploy-modules      # 모듈 설치 스택 배포
+./deploy.sh deploy-traffic      # Traffic Mirroring 스택 배포
+
+# 삭제 명령
+./deploy.sh delete-all          # 모든 스택 삭제 (역순)
+./deploy.sh delete [stack]      # 특정 스택 삭제
+./deploy.sh delete-bucket       # CFN 템플릿용 S3 버킷 삭제
+
+# 상태 확인
+./deploy.sh status              # 모든 스택 상태 확인
+./deploy.sh list                # 배포된 스택 목록
+
+# 설정 관리
+./deploy.sh init                # S3 버킷 생성 (사전 준비)
+./deploy.sh set-region          # 리전 설정 변경
+./deploy.sh show-region         # 현재 리전 확인
+./deploy.sh set-model           # 모델 설정 변경
+./deploy.sh show-model          # 현재 모델 확인
+./deploy.sh show-config         # 전체 설정 확인
+
+# 옵션
+--region REGION                 # AWS 리전 지정
+--model MODEL                   # Claude 모델 지정 (opus-4.5 | sonnet-4)
+--db-password PWD               # DB 비밀번호 지정
 ```
 
 ### 2단계: 에이전트 설정
@@ -244,7 +307,7 @@ LLM-as-a-Judge 방식으로 에이전트 응답 품질을 자동 평가합니다
 | 서비스 | 용도 |
 |--------|------|
 | **Bedrock AgentCore** | AI 에이전트 런타임 |
-| **Bedrock (Claude Opus 4.5)** | LLM 모델 |
+| **Bedrock Claude** | LLM 모델 (Opus 4.5 / Sonnet 4 선택 가능) |
 | **Lambda** | 진단 도구 실행 |
 | **CloudWatch** | 로그 및 메트릭 |
 | **S3** | 결과 저장 |
@@ -273,14 +336,20 @@ jinja2                  # HTML 템플릿
 export AWS_REGION=us-east-1
 export AWS_PROFILE=default
 
-# 평가 설정
-export LLM_JUDGE_MODEL_ID=global.anthropic.claude-opus-4-5-20251101-v1:0
+# 모델 설정 (모든 에이전트에 적용)
+export BEDROCK_MODEL_ID=global.anthropic.claude-opus-4-5-20251101-v1:0
 
 # 선택적 설정
 export CLOUDWATCH_LOG_GROUP=/aws/bedrock-agentcore/troubleshooting-agent
 ```
 
 ### 설정 파일
+
+**cfn_stack/.deploy-config** (자동 생성):
+```bash
+AWS_REGION="us-east-1"
+BEDROCK_MODEL_ID="global.anthropic.claude-opus-4-5-20251101-v1:0"
+```
 
 **evaluation_config.yaml:**
 ```yaml
@@ -289,7 +358,7 @@ aws:
   account_id: "${AWS_ACCOUNT_ID}"
 
 llm_judge:
-  model_id: "${LLM_JUDGE_MODEL_ID:-global.anthropic.claude-opus-4-5-20251101-v1:0}"
+  model_id: "${BEDROCK_MODEL_ID:-global.anthropic.claude-opus-4-5-20251101-v1:0}"
   evaluation_dimensions:
     - helpfulness
     - accuracy
@@ -301,6 +370,17 @@ scoring:
   passing_score_threshold: 3.5
   excellent_score_threshold: 4.5
 ```
+
+### 설정 우선순위
+
+모든 설정은 다음 우선순위로 적용됩니다:
+
+| 우선순위 | 소스 | 예시 |
+|----------|------|------|
+| 1 (최고) | 명령줄 옵션 | `--region us-east-1 --model opus-4.5` |
+| 2 | 환경변수 | `AWS_REGION`, `BEDROCK_MODEL_ID` |
+| 3 | 설정 파일 | `.deploy-config` |
+| 4 (최저) | 대화형 프롬프트 | 실행 시 선택 |
 
 ## 테스트 시나리오
 
@@ -351,6 +431,35 @@ bedrock-agentcore list-runtimes
 - [AWS Bedrock AgentCore 문서](https://docs.aws.amazon.com/bedrock/)
 - [Strands Agents 문서](https://github.com/strands-agents/strands-agents)
 - [CloudFormation 문서](https://docs.aws.amazon.com/cloudformation/)
+
+## 변경 이력 (Changelog)
+
+### v1.1.0 (2026-02-05)
+
+**새로운 기능:**
+- ✨ 대화형 리전 선택 기능 추가 (Bedrock AgentCore 지원 리전)
+- ✨ 대화형 모델 선택 기능 추가 (Opus 4.5 / Sonnet 4)
+- ✨ 설정 저장 기능 (`.deploy-config`)
+- ✨ `set-region`, `show-region`, `set-model`, `show-model`, `show-config` 명령어 추가
+
+**코드 품질:**
+- 📝 모든 코드에 영어/한글 이중 언어 주석 추가
+- 📝 모듈별 상세 docstring 추가
+- 🔧 환경변수 `BEDROCK_MODEL_ID`로 모델 ID 통일
+
+**영향받는 파일:**
+- `cfn_stack/deploy.sh`
+- `workshop-module-1/2/3` 에이전트 파일들
+- `module-4/workshop-module-4` 평가 파이프라인
+
+### v1.0.0 (2026-01-18)
+
+**초기 릴리스:**
+- 🚀 기본 AgentCore 에이전트 (Module 1)
+- 🧠 메모리 강화 에이전트 (Module 2)
+- 🤝 A2A 협업 프레임워크 (Module 3)
+- 📊 LLM-as-a-Judge 평가 프레임워크 (Module 4)
+- 🏗️ CloudFormation 인프라 템플릿
 
 ## 라이선스
 
