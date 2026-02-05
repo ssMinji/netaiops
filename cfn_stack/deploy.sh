@@ -17,10 +17,95 @@ NC='\033[0m' # No Color
 
 # 기본 설정
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-AWS_REGION="${AWS_REGION:-us-east-1}"
+CONFIG_FILE="${SCRIPT_DIR}/.deploy-config"
+AWS_REGION=""
 AWS_ACCOUNT_ID=""
 S3_BUCKET_NAME=""
 S3_PREFIX="netaiops-cfn-templates"
+
+# 지원하는 리전 목록 (Bedrock AgentCore 지원 리전)
+SUPPORTED_REGIONS=("us-east-1" "us-west-2" "eu-west-1" "ap-northeast-1" "ap-southeast-1")
+
+# 함수: 설정 파일에서 리전 로드
+load_config() {
+    if [ -f "$CONFIG_FILE" ]; then
+        source "$CONFIG_FILE"
+    fi
+}
+
+# 함수: 설정 파일에 리전 저장
+save_config() {
+    echo "AWS_REGION=\"$AWS_REGION\"" > "$CONFIG_FILE"
+    log_info "설정이 저장되었습니다: $CONFIG_FILE"
+}
+
+# 함수: 리전 선택 프롬프트
+prompt_region() {
+    echo ""
+    log_info "AWS 리전을 선택하세요 (Bedrock AgentCore 지원 리전):"
+    echo ""
+
+    local i=1
+    for region in "${SUPPORTED_REGIONS[@]}"; do
+        if [ "$region" = "us-east-1" ]; then
+            echo "  $i) $region (기본값, 권장)"
+        else
+            echo "  $i) $region"
+        fi
+        ((i++))
+    done
+    echo "  $i) 직접 입력"
+    echo ""
+
+    read -p "선택 [1-$i] (기본값: 1): " choice
+    choice="${choice:-1}"
+
+    if [[ "$choice" =~ ^[0-9]+$ ]]; then
+        if [ "$choice" -ge 1 ] && [ "$choice" -le ${#SUPPORTED_REGIONS[@]} ]; then
+            AWS_REGION="${SUPPORTED_REGIONS[$((choice-1))]}"
+        elif [ "$choice" -eq $i ]; then
+            read -p "리전 입력 (예: ap-northeast-2): " custom_region
+            AWS_REGION="${custom_region:-us-east-1}"
+        else
+            AWS_REGION="us-east-1"
+        fi
+    else
+        AWS_REGION="us-east-1"
+    fi
+
+    log_success "선택된 리전: $AWS_REGION"
+}
+
+# 함수: 리전 확인 및 설정
+ensure_region() {
+    # 1. 명령줄 옵션으로 이미 설정된 경우 사용
+    if [ -n "$AWS_REGION" ]; then
+        return
+    fi
+
+    # 2. 환경변수 확인
+    if [ -n "${AWS_REGION_ENV:-}" ]; then
+        AWS_REGION="$AWS_REGION_ENV"
+        return
+    fi
+
+    # 3. 설정 파일에서 로드
+    load_config
+    if [ -n "$AWS_REGION" ]; then
+        log_info "저장된 리전 사용: $AWS_REGION"
+        return
+    fi
+
+    # 4. 대화형 프롬프트
+    prompt_region
+
+    # 5. 선택한 리전 저장 여부 확인
+    read -p "이 리전을 기본값으로 저장하시겠습니까? (Y/n): " save_choice
+    save_choice="${save_choice:-Y}"
+    if [[ "$save_choice" =~ ^[Yy]$ ]]; then
+        save_config
+    fi
+}
 
 # 스택 이름 설정
 STACK_SAMPLE_APP="netaiops-sample-app"
@@ -268,16 +353,31 @@ Commands:
   list                배포된 스택 목록
 
   init                S3 버킷만 생성 (사전 준비)
+  set-region          리전 설정 변경
+  show-region         현재 설정된 리전 확인
 
 Options:
-  --region REGION     AWS 리전 (기본: us-east-1)
+  --region REGION     AWS 리전 (미지정 시 대화형 선택)
   --db-password PWD   DB 비밀번호 (기본: ReInvent2025!)
   --s3-bucket NAME    사용할 S3 버킷 이름 (기본: 자동 생성)
   -h, --help          도움말
 
+리전 설정:
+  - 명령줄 옵션 (--region): 가장 높은 우선순위
+  - 환경변수 (AWS_REGION): 두 번째 우선순위
+  - 설정 파일 (.deploy-config): 세 번째 우선순위
+  - 대화형 프롬프트: 위 모두 없을 시 실행
+
+지원 리전 (Bedrock AgentCore):
+  - us-east-1 (기본, 권장)
+  - us-west-2
+  - eu-west-1
+  - ap-northeast-1
+  - ap-southeast-1
+
 Examples:
-  $0 deploy-all
-  $0 deploy-all --region ap-northeast-2
+  $0 deploy-all                           # 대화형 리전 선택
+  $0 deploy-all --region us-east-1        # 명시적 리전 지정
   $0 deploy-base --db-password MySecurePass123!
   $0 status
   $0 delete-all
@@ -455,17 +555,72 @@ init_setup() {
     log_info "이제 './deploy.sh deploy-all' 명령으로 배포할 수 있습니다."
 }
 
+# 함수: 리전 설정 변경
+set_region() {
+    log_info "=== 리전 설정 변경 ==="
+    echo ""
+
+    # 현재 설정 표시
+    if [ -f "$CONFIG_FILE" ]; then
+        source "$CONFIG_FILE"
+        log_info "현재 저장된 리전: ${AWS_REGION:-없음}"
+    fi
+
+    # 새 리전 선택
+    AWS_REGION=""
+    prompt_region
+
+    # 저장
+    save_config
+
+    echo ""
+    log_success "리전이 '$AWS_REGION'으로 변경되었습니다."
+}
+
+# 함수: 현재 리전 확인
+show_region() {
+    log_info "=== 현재 리전 설정 ==="
+    echo ""
+
+    # 1. 설정 파일 확인
+    if [ -f "$CONFIG_FILE" ]; then
+        source "$CONFIG_FILE"
+        if [ -n "$AWS_REGION" ]; then
+            log_info "설정 파일 (.deploy-config): $AWS_REGION"
+        else
+            log_info "설정 파일 (.deploy-config): 설정되지 않음"
+        fi
+    else
+        log_info "설정 파일 (.deploy-config): 파일 없음"
+    fi
+
+    # 2. 환경변수 확인
+    if [ -n "${AWS_REGION_ENV:-}" ]; then
+        log_info "환경변수 (AWS_REGION): $AWS_REGION_ENV"
+    else
+        log_info "환경변수 (AWS_REGION): 설정되지 않음"
+    fi
+
+    echo ""
+    log_info "우선순위: --region 옵션 > 환경변수 > 설정 파일 > 대화형 입력"
+}
+
 # 메인 로직
 main() {
     local command="${1:-}"
     local db_password="ReInvent2025!"
     local extra_args=""
+    local region_from_cli=""
+
+    # 환경변수 백업
+    AWS_REGION_ENV="${AWS_REGION:-}"
+    AWS_REGION=""
 
     # 옵션 파싱
     shift || true
     while [[ $# -gt 0 ]]; do
         case $1 in
-            --region) AWS_REGION="$2"; shift 2 ;;
+            --region) region_from_cli="$2"; shift 2 ;;
             --db-password) db_password="$2"; shift 2 ;;
             --s3-bucket) S3_BUCKET_NAME="$2"; shift 2 ;;
             --delete-bucket) extra_args="--delete-bucket"; shift ;;
@@ -473,6 +628,17 @@ main() {
             *) shift ;;
         esac
     done
+
+    # 명령줄에서 리전이 지정된 경우 우선 사용
+    if [ -n "$region_from_cli" ]; then
+        AWS_REGION="$region_from_cli"
+    fi
+
+    # 도움말, 빈 명령, 리전 관련 명령이 아닌 경우 리전 확인
+    if [[ "$command" != "-h" && "$command" != "--help" && "$command" != "" && \
+          "$command" != "set-region" && "$command" != "show-region" ]]; then
+        ensure_region
+    fi
 
     case "$command" in
         deploy-all)       deploy_all "$db_password" ;;
@@ -488,6 +654,8 @@ main() {
         status)           show_status ;;
         list)             show_status ;;
         init)             init_setup ;;
+        set-region)       set_region ;;
+        show-region)      show_region ;;
         -h|--help|"")     show_usage ;;
         *)                log_error "알 수 없는 명령: $command"; show_usage; exit 1 ;;
     esac
