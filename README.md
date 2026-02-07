@@ -133,11 +133,21 @@ netaiops_v1/
 │   ├── configs/evaluation_config.yaml
 │   └── src/evaluation/
 │
-└── module-4/                           # 평가 파이프라인 (독립 모듈)
-    ├── configs/evaluation_config.yaml
-    └── src/evaluation/
-        ├── agent_evaluation_pipeline.py # LLM-as-a-Judge 평가
-        └── agentcore_client.py         # AgentCore 클라이언트
+├── module-4/                           # 평가 파이프라인 (독립 모듈)
+│   ├── configs/evaluation_config.yaml
+│   └── src/evaluation/
+│       ├── agent_evaluation_pipeline.py # LLM-as-a-Judge 평가
+│       └── agentcore_client.py         # AgentCore 클라이언트
+│
+└── netaiops-chat-frontend/             # Chat Frontend (Streamlit)
+    ├── README.md                       # Chat Frontend 문서
+    ├── requirements.txt                # Python 의존성
+    ├── Dockerfile                      # 컨테이너 빌드 설정
+    └── src/
+        ├── app.py                      # Streamlit 메인 앱
+        ├── components/                 # UI 컴포넌트
+        ├── models/                     # 데이터 모델
+        └── services/                   # AgentCore 클라이언트
 ```
 
 ---
@@ -396,6 +406,44 @@ LLM-as-a-Judge 방식의 자동 품질 평가 시스템입니다.
 | Clarity | 20% | 명확성과 이해 용이성 |
 | Professionalism | 15% | 전문성과 적절한 톤 |
 | Completeness | 15% | 응답의 완전성 |
+
+### Chat Frontend (Streamlit)
+
+웹 기반 채팅 인터페이스로 AgentCore Runtime과 대화형으로 상호작용합니다.
+
+**실행 방법:**
+```bash
+cd netaiops-chat-frontend
+
+# 가상환경 설정
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+
+# 앱 실행
+cd src
+streamlit run app.py
+```
+
+**Docker 실행:**
+```bash
+cd netaiops-chat-frontend
+docker build -t netaiops-chat .
+docker run -p 8501:8501 netaiops-chat
+```
+
+브라우저에서 `http://localhost:8501` 접속
+
+**필요 설정:**
+- Agent Runtime ARN: `bedrock-agentcore list-runtimes`로 확인
+- JWT 토큰: Cognito에서 발급
+
+**질문 예시:**
+```
+- "10.0.1.100에서 10.0.2.50으로 연결이 안됩니다. 원인을 분석해주세요."
+- "DNS 조회 실패의 원인을 분석해주세요."
+- "VPC 피어링 연결 상태를 확인해주세요."
+```
 
 ---
 
