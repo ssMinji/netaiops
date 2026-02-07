@@ -36,61 +36,32 @@ Parameters:
 Resources:
 
   # ==========================================================================
-  # IAM Role for Cognito to send SMS messages
-  # Cognito SMS 메시지 전송을 위한 IAM 역할
+  # Cognito User Pool
+  # Cognito 사용자 풀
   # ==========================================================================
-  # This role allows Cognito to publish SMS messages via SNS
-  # 이 역할은 Cognito가 SNS를 통해 SMS 메시지를 발행할 수 있도록 허용합니다
-  # ExternalId condition is required for Cognito to assume this role
-  # Cognito가 이 역할을 수임하려면 ExternalId 조건이 필요합니다
+  # SMS MFA is disabled for machine-to-machine authentication
+  # 머신 간 인증에는 SMS MFA가 필요하지 않으므로 비활성화
   # ==========================================================================
-  CognitoSMSRole:
-    Type: AWS::IAM::Role
-    Properties:
-      RoleName: !Sub '${AWS::StackName}-cognito-sms-role'
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: cognito-idp.amazonaws.com
-            Action: sts:AssumeRole
-            Condition:
-              StringEquals:
-                # ExternalId must match the value in UserPool SmsConfiguration
-                # ExternalId는 UserPool SmsConfiguration의 값과 일치해야 함
-                sts:ExternalId: !Sub '${AWS::StackName}-sms-external-id'
-      Policies:
-        - PolicyName: CognitoSMSPolicy
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action:
-                  - sns:Publish
-                Resource: '*'
-
   UserPool:
     Type: AWS::Cognito::UserPool
-    # Ensure IAM role is fully created before UserPool references it
-    # UserPool이 역할을 참조하기 전에 IAM 역할이 완전히 생성되도록 함
-    DependsOn: CognitoSMSRole
     Properties:
       UserPoolName: !Ref UserPoolName
-      MfaConfiguration: 'OPTIONAL'
+      # MFA disabled for M2M auth (M2M 인증을 위해 MFA 비활성화)
+      MfaConfiguration: 'OFF'
       UsernameConfiguration:
         CaseSensitive: false
       UsernameAttributes:
         - email
       AutoVerifiedAttributes:
         - email
-      SmsConfiguration:
-        # ExternalId must match the condition in CognitoSMSRole trust policy
-        # ExternalId는 CognitoSMSRole 신뢰 정책의 조건과 일치해야 함
-        ExternalId: !Sub '${AWS::StackName}-sms-external-id'
-        SnsCallerArn: !GetAtt CognitoSMSRole.Arn
-      EnabledMfas:
-        - SMS_MFA
+      # Password policy (비밀번호 정책)
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: false
+          RequireUppercase: true
 
   AdminGroup:
     Type: AWS::Cognito::UserPoolGroup
