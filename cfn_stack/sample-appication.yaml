@@ -225,6 +225,229 @@ Resources:
           Value: RIV-Bastion-Instance
 
   # ==========================================
+  # Chat Frontend EC2 인스턴스 (Streamlit)
+  # CHAT FRONTEND EC2 INSTANCE (STREAMLIT)
+  # ==========================================
+  # NetAIOps Chat Frontend를 위한 EC2 인스턴스
+  # Streamlit 기반 채팅 인터페이스를 호스팅합니다
+  # ==========================================
+  ChatFrontendSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for Chat Frontend EC2 instance (Streamlit)
+      VpcId: !Ref AppVPC
+      SecurityGroupIngress:
+        # Streamlit 포트 (HTTP)
+        - IpProtocol: tcp
+          FromPort: 8501
+          ToPort: 8501
+          CidrIp: 0.0.0.0/0
+          Description: Streamlit web interface
+        # SSH 접속 (SSM 사용 권장)
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+          Description: SSH access
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-chat-frontend-sg'
+
+  ChatFrontendInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${AWS::StackName}-chat-frontend-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
+      Policies:
+        - PolicyName: ChatFrontendPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # Bedrock AgentCore 권한
+              - Effect: Allow
+                Action:
+                  - bedrock-agentcore:InvokeRuntime
+                  - bedrock-agentcore:GetRuntime
+                  - bedrock-agentcore:ListRuntimes
+                  - bedrock-agentcore-control:GetRuntime
+                  - bedrock-agentcore-control:ListRuntimes
+                Resource: '*'
+              # Bedrock 모델 권한
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                Resource: '*'
+              # SSM Parameter 읽기 (Cognito 설정)
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                  - ssm:GetParameters
+                  - ssm:GetParametersByPath
+                Resource: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/a2a/*'
+              # Cognito 토큰 발급
+              - Effect: Allow
+                Action:
+                  - cognito-idp:InitiateAuth
+                  - cognito-idp:GetUser
+                Resource: '*'
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-chat-frontend-role'
+
+  ChatFrontendInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref ChatFrontendInstanceRole
+
+  ChatFrontendEC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Sub '{{resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64}}'
+      InstanceType: t3.xlarge
+      SubnetId: !Ref AppPublicSubnet1
+      SecurityGroupIds:
+        - !Ref ChatFrontendSecurityGroup
+      IamInstanceProfile: !Ref ChatFrontendInstanceProfile
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: 100
+            VolumeType: gp3
+            Encrypted: true
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -euxo pipefail
+
+          # Log all output (모든 출력 로깅)
+          exec > >(tee /var/log/user-data.log) 2>&1
+
+          echo "=== NetAIOps Chat Frontend Setup Started at $(date) ==="
+
+          # System update (시스템 업데이트)
+          dnf update -y --allowerasing
+
+          # Install required packages (필수 패키지 설치)
+          dnf install -y --allowerasing curl jq tar gzip git python3.11 python3.11-pip
+
+          # Set Python 3.11 as default (Python 3.11을 기본으로 설정)
+          alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1
+          alternatives --set python3 /usr/bin/python3.11
+
+          # Install pip packages (pip 패키지 설치)
+          pip3.11 install --upgrade pip
+          pip3.11 install streamlit requests pydantic boto3
+
+          # Install AWS CLI v2 (AWS CLI v2 설치)
+          cd /tmp
+          curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+          unzip -q awscliv2.zip
+          ./aws/install
+          rm -rf aws awscliv2.zip
+
+          # Install Docker (Docker 설치)
+          dnf install -y docker
+          systemctl enable docker
+          systemctl start docker
+          usermod -aG docker ec2-user
+
+          # Clone NetAIOps repository (NetAIOps 리포지토리 클론)
+          cd /home/ec2-user
+          git clone https://github.com/whchoi98/netaiops.git || echo "Clone failed, may already exist"
+
+          # Setup Chat Frontend (Chat Frontend 설정)
+          CHAT_DIR="/home/ec2-user/netaiops/netaiops-chat-frontend"
+          if [ -d "$CHAT_DIR" ]; then
+            cd $CHAT_DIR
+            pip3.11 install -r requirements.txt
+
+            # Create systemd service for Streamlit (Streamlit용 systemd 서비스 생성)
+            cat > /etc/systemd/system/netaiops-chat.service <<EOF
+          [Unit]
+          Description=NetAIOps Chat Frontend (Streamlit)
+          After=network.target
+
+          [Service]
+          Type=simple
+          User=ec2-user
+          WorkingDirectory=/home/ec2-user/netaiops/netaiops-chat-frontend/src
+          Environment="PATH=/usr/local/bin:/usr/bin:/bin"
+          ExecStart=/usr/bin/python3.11 -m streamlit run app.py --server.address 0.0.0.0 --server.port 8501
+          Restart=always
+          RestartSec=10
+
+          [Install]
+          WantedBy=multi-user.target
+          EOF
+
+            # Set permissions (권한 설정)
+            chown -R ec2-user:ec2-user /home/ec2-user/netaiops
+
+            # Enable and start service (서비스 활성화 및 시작)
+            systemctl daemon-reload
+            systemctl enable netaiops-chat
+            systemctl start netaiops-chat
+
+            echo "Chat Frontend service started"
+          else
+            echo "WARNING: Chat Frontend directory not found"
+          fi
+
+          # Install bedrock-agentcore CLI (bedrock-agentcore CLI 설치)
+          pip3.11 install bedrock-agentcore || echo "bedrock-agentcore install failed"
+
+          # Create helper script for getting Cognito token (Cognito 토큰 발급 헬퍼 스크립트)
+          cat > /home/ec2-user/get-cognito-token.sh <<'TOKENSCRIPT'
+          #!/bin/bash
+          # Get Cognito token for AgentCore authentication
+          # AgentCore 인증용 Cognito 토큰 발급
+
+          STACK_NAME="netaiops-cognito"
+          REGION=$(curl -s http://169.254.169.254/latest/meta-data/placement/region)
+
+          # Get parameters from SSM
+          CLIENT_ID=$(aws ssm get-parameter --name "/a2a/app/performance/agentcore/$STACK_NAME/machine_client_id" --query "Parameter.Value" --output text --region $REGION 2>/dev/null)
+          CLIENT_SECRET=$(aws ssm get-parameter --name "/a2a/app/performance/agentcore/$STACK_NAME/machine_client_secret" --query "Parameter.Value" --output text --region $REGION 2>/dev/null)
+          TOKEN_URL=$(aws ssm get-parameter --name "/a2a/app/performance/agentcore/$STACK_NAME/cognito_token_url" --query "Parameter.Value" --output text --region $REGION 2>/dev/null)
+
+          if [ -z "$CLIENT_ID" ] || [ -z "$CLIENT_SECRET" ] || [ -z "$TOKEN_URL" ]; then
+            echo "Error: Could not retrieve Cognito parameters. Make sure netaiops-cognito stack is deployed."
+            exit 1
+          fi
+
+          # Get token
+          RESPONSE=$(curl -s -X POST "$TOKEN_URL" \
+            -H "Content-Type: application/x-www-form-urlencoded" \
+            -d "grant_type=client_credentials&client_id=$CLIENT_ID&client_secret=$CLIENT_SECRET")
+
+          echo "$RESPONSE" | jq -r '.access_token'
+          TOKENSCRIPT
+          chmod +x /home/ec2-user/get-cognito-token.sh
+          chown ec2-user:ec2-user /home/ec2-user/get-cognito-token.sh
+
+          echo "=== NetAIOps Chat Frontend Setup Completed at $(date) ==="
+          echo "Access URL: http://$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4):8501"
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-Chat-Frontend'
+        - Key: Application
+          Value: NetAIOps
+
+  # ==========================================
   # 애플리케이션 VPC 인프라
   # APP VPC INFRASTRUCTURE
   # ==========================================
@@ -5355,3 +5578,27 @@ Outputs:
     Value: !GetAtt SupportTicketFunction.Arn
     Export:
       Name: !Sub "${AWS::StackName}-SupportTicketFunctionArn"
+
+  ChatFrontendInstanceId:
+    Description: Chat Frontend EC2 Instance ID
+    Value: !Ref ChatFrontendEC2Instance
+    Export:
+      Name: !Sub "${AWS::StackName}-ChatFrontendInstanceId"
+
+  ChatFrontendPublicIP:
+    Description: Chat Frontend Public IP Address
+    Value: !GetAtt ChatFrontendEC2Instance.PublicIp
+    Export:
+      Name: !Sub "${AWS::StackName}-ChatFrontendPublicIP"
+
+  ChatFrontendURL:
+    Description: NetAIOps Chat Frontend URL (Streamlit)
+    Value: !Sub "http://${ChatFrontendEC2Instance.PublicIp}:8501"
+    Export:
+      Name: !Sub "${AWS::StackName}-ChatFrontendURL"
+
+  ChatFrontendSSMConnect:
+    Description: SSM Session Manager command to connect to Chat Frontend
+    Value: !Sub "aws ssm start-session --target ${ChatFrontendEC2Instance} --region ${AWS::Region}"
+    Export:
+      Name: !Sub "${AWS::StackName}-ChatFrontendSSMConnect"
