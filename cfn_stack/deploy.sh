@@ -62,13 +62,14 @@ BEDROCK_MODEL_ID=""
 # Associative array mapping model names to full model IDs
 # 모델 이름을 전체 모델 ID에 매핑하는 연관 배열
 declare -A SUPPORTED_MODELS=(
-    ["opus-4.5"]="global.anthropic.claude-opus-4-5-20251101-v1:0"   # Best performance (최고 성능)
+    ["opus-4.6"]="global.anthropic.claude-opus-4-6-v1"              # Latest & best (최신, 최고 성능)
+    ["opus-4.5"]="global.anthropic.claude-opus-4-5-20251101-v1:0"   # High performance (고성능)
     ["sonnet-4"]="global.anthropic.claude-sonnet-4-20250514-v1:0"   # Fast & cost-effective (빠르고 비용 효율적)
 )
 
 # Ordered list of model names for menu display
 # 메뉴 표시용 모델 이름 순서 목록
-MODEL_NAMES=("opus-4.5" "sonnet-4")
+MODEL_NAMES=("opus-4.6" "opus-4.5" "sonnet-4")
 
 # =============================================================================
 # Configuration Management Functions
@@ -215,32 +216,41 @@ prompt_model() {
     local i=1
     for model_name in "${MODEL_NAMES[@]}"; do
         local model_id="${SUPPORTED_MODELS[$model_name]}"
-        if [ "$model_name" = "opus-4.5" ]; then
-            # Opus 4.5: Best performance, recommended for complex tasks
-            # Opus 4.5: 최고 성능, 복잡한 작업에 권장
-            echo "  $i) $model_name (기본값, 최고 성능)"
-            echo "     → $model_id"
-        else
-            # Sonnet 4: Fast response, cost-effective
-            # Sonnet 4: 빠른 응답, 비용 효율적
-            echo "  $i) $model_name (빠른 응답, 비용 효율)"
-            echo "     → $model_id"
-        fi
+        case "$model_name" in
+            "opus-4.6")
+                # Opus 4.6: Latest and best performance
+                # Opus 4.6: 최신, 최고 성능
+                echo "  $i) $model_name (기본값, 최신 최고 성능)"
+                echo "     → $model_id"
+                ;;
+            "opus-4.5")
+                # Opus 4.5: High performance
+                # Opus 4.5: 고성능
+                echo "  $i) $model_name (고성능)"
+                echo "     → $model_id"
+                ;;
+            "sonnet-4")
+                # Sonnet 4: Fast response, cost-effective
+                # Sonnet 4: 빠른 응답, 비용 효율적
+                echo "  $i) $model_name (빠른 응답, 비용 효율)"
+                echo "     → $model_id"
+                ;;
+        esac
         ((i++))
     done
     echo ""
 
     # Get user selection (사용자 선택 받기)
     read -p "선택 [1-$((i-1))] (기본값: 1): " choice
-    choice="${choice:-1}"  # Default to 1 (Opus 4.5)
+    choice="${choice:-1}"  # Default to 1 (Opus 4.6)
 
     # Process selection and set model ID (선택 처리 및 모델 ID 설정)
     if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le ${#MODEL_NAMES[@]} ]; then
         local selected_name="${MODEL_NAMES[$((choice-1))]}"
         BEDROCK_MODEL_ID="${SUPPORTED_MODELS[$selected_name]}"
     else
-        # Default to Opus 4.5 for invalid input (잘못된 입력시 Opus 4.5 기본값)
-        BEDROCK_MODEL_ID="${SUPPORTED_MODELS[opus-4.5]}"
+        # Default to Opus 4.6 for invalid input (잘못된 입력시 Opus 4.6 기본값)
+        BEDROCK_MODEL_ID="${SUPPORTED_MODELS[opus-4.6]}"
     fi
 
     log_success "선택된 모델: $BEDROCK_MODEL_ID"
@@ -588,7 +598,8 @@ Options:
   - ap-southeast-1
 
 지원 모델 (Claude):
-  - opus-4.5  → global.anthropic.claude-opus-4-5-20251101-v1:0 (기본, 최고 성능)
+  - opus-4.6  → global.anthropic.claude-opus-4-6-v1 (기본, 최신 최고 성능)
+  - opus-4.5  → global.anthropic.claude-opus-4-5-20251101-v1:0 (고성능)
   - sonnet-4  → global.anthropic.claude-sonnet-4-20250514-v1:0 (빠른 응답, 비용 효율)
 
 Examples:

@@ -208,7 +208,8 @@ python scripts/generate_html_report.py --latest --open
 
 | 모델명 | 모델 ID | 특성 |
 |--------|---------|------|
-| opus-4.5 | global.anthropic.claude-opus-4-5-20251101-v1:0 | 최고 성능 (기본값) |
+| opus-4.6 | global.anthropic.claude-opus-4-6-v1 | 최신 최고 성능 (기본값) |
+| opus-4.5 | global.anthropic.claude-opus-4-5-20251101-v1:0 | 고성능 |
 | sonnet-4 | global.anthropic.claude-sonnet-4-20250514-v1:0 | 빠른 응답, 비용 효율 |
 
 ### 명령어 레퍼런스
@@ -243,7 +244,7 @@ python scripts/generate_html_report.py --latest --open
 **옵션:**
 ```bash
 --region REGION     # AWS 리전 (us-east-1, ap-northeast-1 등)
---model MODEL       # Claude 모델 (opus-4.5 | sonnet-4)
+--model MODEL       # Claude 모델 (opus-4.6 | opus-4.5 | sonnet-4)
 --db-password PWD   # 데이터베이스 비밀번호
 ```
 
