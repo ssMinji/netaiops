@@ -153,6 +153,7 @@ netaiops_v1/
 
 ### Step 1: 인프라 배포
 
+**방법 1: 전체 배포 (권장)**
 ```bash
 cd cfn_stack
 
@@ -162,6 +163,31 @@ cd cfn_stack
 # 또는 명시적 지정
 ./deploy.sh deploy-all --region ap-northeast-2 --model opus-4.5
 ```
+
+**방법 2: 단계별 배포**
+```bash
+cd cfn_stack
+
+# 1. 기본 인프라
+./deploy.sh deploy-base --region ap-northeast-2 --model opus-4.5
+
+# 2. Network Flow Monitor (enable + setup 함께)
+./deploy.sh deploy-nfm
+
+# 3. Cognito 인증
+./deploy.sh deploy-cognito
+
+# 4. 모듈 설치
+./deploy.sh deploy-modules
+
+# 5. Traffic Mirroring
+./deploy.sh deploy-traffic
+
+# 6. 상태 확인
+./deploy.sh status
+```
+
+> 참고: 첫 번째 명령에서 `--region`과 `--model`을 지정하면 `.deploy-config`에 저장되어 이후 명령에서 자동 적용됩니다.
 
 ### Step 2: 에이전트 설정
 
