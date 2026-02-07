@@ -174,26 +174,20 @@ cd cfn_stack
 ./deploy.sh deploy-all --region ap-northeast-2 --model opus-4.5
 ```
 
-**방법 2: 단계별 배포**
+**방법 2: 단계별 배포 (AgentCore 먼저)**
 ```bash
 cd cfn_stack
 
-# 1. 기본 인프라
-./deploy.sh deploy-base --region ap-northeast-2 --model opus-4.5
+# 1. AgentCore 스택 배포 (Cognito + NFM Enable, 빠름)
+./deploy.sh deploy-agentcore --region ap-northeast-2 --model opus-4.5
 
-# 2. Network Flow Monitor (enable + setup 함께)
-./deploy.sh deploy-nfm
+# 2. 기본 인프라 배포 (sample-app, RDS 포함으로 15-25분 소요)
+./deploy.sh deploy-base
 
-# 3. Cognito 인증
-./deploy.sh deploy-cognito
+# 3. 나머지 인프라 배포 (Modules + NFM Setup + Traffic Mirroring)
+./deploy.sh deploy-infra
 
-# 4. 모듈 설치
-./deploy.sh deploy-modules
-
-# 5. Traffic Mirroring
-./deploy.sh deploy-traffic
-
-# 6. 상태 확인
+# 4. 상태 확인
 ./deploy.sh status
 ```
 
@@ -252,8 +246,10 @@ python scripts/generate_html_report.py --latest --open
 
 **배포 명령:**
 ```bash
-./deploy.sh deploy-all          # 전체 스택 배포 (권장)
-./deploy.sh deploy-base         # 기본 인프라만
+./deploy.sh deploy-all          # 전체 스택 배포 (AgentCore 먼저, 권장)
+./deploy.sh deploy-agentcore    # AgentCore 스택만 (Cognito + NFM Enable, 빠름)
+./deploy.sh deploy-base         # 기본 인프라만 (sample-app, RDS 포함으로 느림)
+./deploy.sh deploy-infra        # 나머지 인프라 (Modules + NFM Setup + Traffic)
 ./deploy.sh deploy-nfm          # Network Flow Monitor (enable + setup)
 ./deploy.sh deploy-cognito      # Cognito 인증
 ./deploy.sh deploy-modules      # 모듈 설치
@@ -262,36 +258,47 @@ python scripts/generate_html_report.py --latest --open
 
 ### 배포 순서
 
-**deploy-all 실행 순서 (권장):**
+**deploy-all 실행 순서 (권장, AgentCore 먼저):**
 ```
-[0/5] S3 버킷 준비
-[1/5] sample-app (기본 인프라)
-[2/5] nfm-enable (NFM 활성화)
-[3/5] cognito + modules (인증 및 모듈)
-[4/5] nfm-setup (NFM 설정)
-[5/5] traffic-mirror (트래픽 미러링)
+[0/6] S3 버킷 준비
+--- Phase 1: AgentCore 스택 (빠른 배포) ---
+[1/6] cognito (Cognito 인증)
+[2/6] nfm-enable (NFM 활성화)
+--- Phase 2: 기본 인프라 (RDS 포함, 15-25분 소요) ---
+[3/6] sample-app (기본 인프라, Chat Frontend 포함)
+--- Phase 3: 나머지 인프라 스택 ---
+[4/6] modules (모듈 설치)
+[5/6] nfm-setup (NFM 설정)
+[6/6] traffic-mirror (트래픽 미러링)
 [정리] S3 템플릿 삭제
+```
+
+**단계별 배포 (권장):**
+```
+deploy-agentcore → cognito + nfm-enable (빠름, sample-app 의존 없음)
+deploy-base      → sample-app (느림, RDS 15-25분)
+deploy-infra     → modules + nfm-setup + traffic-mirror
 ```
 
 **개별 명령 순차 실행 시:**
 ```
-deploy-base    → sample-app
-deploy-nfm     → nfm-enable + nfm-setup (한번에 실행)
 deploy-cognito → cognito
+deploy-nfm     → nfm-enable + nfm-setup (한번에 실행)
+deploy-base    → sample-app
 deploy-modules → modules
 deploy-traffic → traffic-mirror
 ```
 
-**deploy-all vs 개별 명령 차이점:**
+**배포 방식 비교:**
 
-| 항목 | deploy-all | 개별 명령 순차 실행 |
-|------|-----------|-------------------|
-| NFM 배포 | Enable → (다른 작업) → Setup 분리 | Enable + Setup 한번에 |
-| S3 정리 | 완료 후 자동 정리 | 수동 cleanup-templates 필요 |
-| 상태 표시 | 완료 후 자동 표시 | 수동 status 실행 필요 |
-| 진행 상황 | 단계별 표시 | 개별 표시 |
+| 항목 | deploy-all | deploy-agentcore + deploy-base + deploy-infra |
+|------|-----------|---------------------------------------------|
+| 배포 순서 | AgentCore 먼저, sample-app 중간 | AgentCore 먼저, sample-app 중간 |
+| S3 정리 | 완료 후 자동 정리 | deploy-infra에서 자동 정리 |
+| 상태 표시 | 완료 후 자동 표시 | 각 단계 완료 후 표시 |
+| 장점 | 한 번에 전체 배포 | 단계별 진행 확인 가능 |
 
-> 참고: 개별 명령도 의존성이 충족되면 정상 작동하지만, `deploy-all`이 최적화된 순서로 배포합니다.
+> 참고: AgentCore 스택(Cognito, NFM Enable)은 sample-app에 의존하지 않으므로 먼저 빠르게 배포할 수 있습니다.
 
 ### 실시간 진행 상황 표시
 

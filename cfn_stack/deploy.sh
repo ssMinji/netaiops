@@ -740,8 +740,10 @@ NetAIOps CloudFormation 배포 스크립트 (S3 지원)
 사용법: $0 [command] [options]
 
 Commands:
-  deploy-all          모든 스택 순차 배포
-  deploy-base         기본 인프라만 배포 (sample-app)
+  deploy-all          모든 스택 순차 배포 (AgentCore 먼저, sample-app 마지막)
+  deploy-agentcore    AgentCore 스택만 배포 (Cognito + NFM Enable, 빠름)
+  deploy-base         기본 인프라만 배포 (sample-app, RDS 포함으로 느림)
+  deploy-infra        나머지 인프라 배포 (Modules + NFM Setup + Traffic)
   deploy-nfm          Network Flow Monitor 배포 (enable + setup)
   deploy-cognito      Cognito 인증 스택 배포
   deploy-modules      모듈 설치 스택 배포
@@ -788,8 +790,16 @@ Options:
   - sonnet-4  → global.anthropic.claude-sonnet-4-20250514-v1:0 (빠른 응답, 비용 효율)
 
 Examples:
+  # 전체 배포 (권장)
   $0 deploy-all                           # 대화형 리전/모델 선택
-  $0 deploy-all --region us-east-1 --model opus-4.5
+  $0 deploy-all --region ap-northeast-2 --model opus-4.5
+
+  # 단계별 배포 (AgentCore 먼저)
+  $0 deploy-agentcore                     # 1. AgentCore 스택 (Cognito + NFM Enable)
+  $0 deploy-base                          # 2. sample-app (느림, RDS 포함)
+  $0 deploy-infra                         # 3. 나머지 인프라
+
+  # 기타
   $0 deploy-all --model sonnet-4          # Sonnet 4 모델 사용
   $0 set-model                            # 모델만 변경
   $0 show-config                          # 전체 설정 확인
@@ -870,45 +880,160 @@ deploy_traffic() {
         "NetworkFlowMonitorStackName=$STACK_NFM_SETUP"
 }
 
-# 함수: 전체 배포
-deploy_all() {
-    local db_password="${1:-MySecurePass123!}"
-
-    log_info "=== NetAIOps 전체 스택 배포 시작 ==="
+# =============================================================================
+# 함수: AgentCore 스택만 배포 (Cognito + NFM Enable)
+# deploy_agentcore: Deploy only AgentCore related stacks (fast)
+# =============================================================================
+# sample-app에 의존하지 않는 스택만 배포 (빠른 배포)
+# Deploys stacks that don't depend on sample-app (fast deployment)
+# =============================================================================
+deploy_agentcore() {
+    log_info "=== NetAIOps AgentCore 스택 배포 시작 ==="
+    log_info "sample-app 의존성 없는 스택만 배포합니다 (빠른 배포)"
     echo ""
 
     # S3 버킷 사전 생성
-    log_step "[0/5] S3 버킷 준비"
+    log_step "[0/2] S3 버킷 준비"
     ensure_s3_bucket
     echo ""
 
-    # 1단계: 기본 인프라
-    log_step "[1/5] 기본 애플리케이션 인프라 배포"
-    deploy_base "$db_password"
+    # 1단계: Cognito (AgentCore 인증)
+    log_step "[1/2] Cognito 인증 스택 배포"
+    deploy_cognito
     echo ""
 
     # 2단계: NFM Enable
-    log_step "[2/5] NFM Enable 배포"
+    log_step "[2/2] NFM Enable 배포"
     deploy_stack "$STACK_NFM_ENABLE" "network-flow-monitor-enable.yaml"
     echo ""
 
-    # 3단계: Cognito 및 모듈 배포
-    log_step "[3/5] Cognito 및 모듈 배포"
-    deploy_cognito
+    log_success "=== AgentCore 스택 배포 완료 ==="
+    echo ""
+    log_info "다음 단계: ./deploy.sh deploy-base 실행 (sample-app 배포)"
+    log_info "           ./deploy.sh deploy-infra 실행 (나머지 인프라 배포)"
+    echo ""
+    show_status
+}
+
+# =============================================================================
+# 함수: 인프라 스택 배포 (sample-app 이후)
+# deploy_infra: Deploy infrastructure stacks after sample-app
+# =============================================================================
+# sample-app 배포 후 실행해야 함 (의존성 있음)
+# Must run after sample-app deployment (has dependencies)
+# =============================================================================
+deploy_infra() {
+    log_info "=== NetAIOps 인프라 스택 배포 시작 ==="
+    log_info "sample-app 배포 후 실행되는 스택들입니다"
+    echo ""
+
+    # sample-app 배포 확인
+    local sample_status=$(check_stack_status "$STACK_SAMPLE_APP")
+    if [[ "$sample_status" != *"COMPLETE"* ]] || [[ "$sample_status" == "NOT_FOUND" ]]; then
+        log_error "sample-app 스택이 배포되지 않았습니다."
+        log_info "먼저 실행: ./deploy.sh deploy-base"
+        return 1
+    fi
+
+    # 1단계: 모듈 배포
+    log_step "[1/3] 모듈 설치 스택 배포"
     deploy_modules
     echo ""
 
-    # 4단계: NFM Setup
-    log_step "[4/5] NFM Setup 배포"
+    # 2단계: NFM Setup
+    log_step "[2/3] NFM Setup 배포"
     deploy_stack "$STACK_NFM_SETUP" "network-flow-monitor-setup.yaml" \
         "SampleApplicationStackName=$STACK_SAMPLE_APP" \
         "NetworkFlowMonitorEnableStackName=$STACK_NFM_ENABLE"
     echo ""
 
-    # 5단계: Traffic Mirroring
-    log_step "[5/5] Traffic Mirroring 배포"
+    # 3단계: Traffic Mirroring
+    log_step "[3/3] Traffic Mirroring 배포"
     deploy_traffic
+    echo ""
 
+    # 배포 완료 후 S3 템플릿 정리
+    log_step "[정리] S3 템플릿 삭제"
+    cleanup_s3_templates
+
+    echo ""
+    log_success "=== 인프라 스택 배포 완료 ==="
+    echo ""
+    show_status
+}
+
+# =============================================================================
+# 함수: 전체 배포 (새로운 순서: AgentCore 먼저, sample-app 마지막)
+# deploy_all: Full deployment (new order: AgentCore first, sample-app last)
+# =============================================================================
+# 배포 순서:
+#   1. Cognito (AgentCore 인증) - 빠름
+#   2. NFM Enable - 빠름
+#   3. sample-app (기본 인프라) - 느림 (RDS 포함)
+#   4. Modules - sample-app 의존
+#   5. NFM Setup - sample-app, nfm-enable 의존
+#   6. Traffic Mirroring - sample-app, nfm-setup 의존
+# =============================================================================
+deploy_all() {
+    local db_password="${1:-MySecurePass123!}"
+
+    log_info "=== NetAIOps 전체 스택 배포 시작 ==="
+    log_info "배포 순서: AgentCore 스택 → sample-app → 나머지 인프라"
+    echo ""
+
+    # S3 버킷 사전 생성
+    log_step "[0/6] S3 버킷 준비"
+    ensure_s3_bucket
+    echo ""
+
+    # ===========================================
+    # Phase 1: AgentCore 스택 (빠른 배포)
+    # ===========================================
+    log_info "--- Phase 1: AgentCore 스택 (빠른 배포) ---"
+    echo ""
+
+    # 1단계: Cognito (AgentCore 인증)
+    log_step "[1/6] Cognito 인증 스택 배포"
+    deploy_cognito
+    echo ""
+
+    # 2단계: NFM Enable
+    log_step "[2/6] NFM Enable 배포"
+    deploy_stack "$STACK_NFM_ENABLE" "network-flow-monitor-enable.yaml"
+    echo ""
+
+    # ===========================================
+    # Phase 2: 기본 인프라 (느린 배포 - RDS 포함)
+    # ===========================================
+    log_info "--- Phase 2: 기본 인프라 (RDS 포함, 15-25분 소요) ---"
+    echo ""
+
+    # 3단계: 기본 인프라 (sample-app)
+    log_step "[3/6] 기본 애플리케이션 인프라 배포 (RDS 포함)"
+    deploy_base "$db_password"
+    echo ""
+
+    # ===========================================
+    # Phase 3: 나머지 인프라 (sample-app 의존)
+    # ===========================================
+    log_info "--- Phase 3: 나머지 인프라 스택 ---"
+    echo ""
+
+    # 4단계: 모듈 배포
+    log_step "[4/6] 모듈 설치 스택 배포"
+    deploy_modules
+    echo ""
+
+    # 5단계: NFM Setup
+    log_step "[5/6] NFM Setup 배포"
+    deploy_stack "$STACK_NFM_SETUP" "network-flow-monitor-setup.yaml" \
+        "SampleApplicationStackName=$STACK_SAMPLE_APP" \
+        "NetworkFlowMonitorEnableStackName=$STACK_NFM_ENABLE"
+    echo ""
+
+    # 6단계: Traffic Mirroring
+    log_step "[6/6] Traffic Mirroring 배포"
+    deploy_traffic
     echo ""
 
     # 배포 완료 후 S3 템플릿 정리
@@ -1154,7 +1279,9 @@ main() {
 
     case "$command" in
         deploy-all)       deploy_all "$db_password" ;;
+        deploy-agentcore) deploy_agentcore ;;
         deploy-base)      deploy_base "$db_password" ;;
+        deploy-infra)     deploy_infra ;;
         deploy-nfm)       deploy_nfm ;;
         deploy-cognito)   deploy_cognito ;;
         deploy-modules)   deploy_modules ;;
