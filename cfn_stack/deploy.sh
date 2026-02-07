@@ -14,6 +14,7 @@
 #   - Interactive model selection: Opus 4.5 / Sonnet 4 (대화형 모델 선택)
 #   - Configuration persistence in .deploy-config (설정 파일 저장)
 #   - S3-based large template deployment (S3 기반 대용량 템플릿 배포)
+#   - Real-time stack event monitoring (실시간 스택 이벤트 모니터링)
 #
 # Usage (사용법): ./deploy.sh [command] [options]
 #
@@ -452,7 +453,20 @@ cleanup_s3_templates() {
     fi
 }
 
-# 함수: 스택 배포 (S3 사용)
+# =============================================================================
+# Stack Deployment Function (with real-time progress monitoring)
+# 스택 배포 함수 (실시간 진행 상황 모니터링 포함)
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# deploy_stack: Deploy a CloudFormation stack with real-time event monitoring
+# deploy_stack: 실시간 이벤트 모니터링과 함께 CloudFormation 스택 배포
+# -----------------------------------------------------------------------------
+# Parameters (매개변수):
+#   $1 - Stack name (스택 이름)
+#   $2 - Template file (템플릿 파일)
+#   $@ - Parameter overrides (파라미터 오버라이드)
+# -----------------------------------------------------------------------------
 deploy_stack() {
     local stack_name=$1
     local template_file=$2
@@ -461,33 +475,87 @@ deploy_stack() {
 
     log_step "배포 중: $stack_name"
 
-    # S3 버킷 확인/생성
+    # S3 버킷 확인/생성 (Ensure S3 bucket exists)
     ensure_s3_bucket
 
     local bucket_name=$(get_s3_bucket_name)
 
-    # 템플릿을 S3에 업로드
+    # 템플릿을 S3에 업로드 (Upload template to S3)
     local s3_url=$(upload_template_to_s3 "$template_file")
 
-    # CloudFormation 배포 명령 구성
+    # 배포 시작 시간 기록 (Record deployment start time for event filtering)
+    local start_time=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+    # CloudFormation 배포 명령 구성 (Construct CloudFormation deploy command)
     local cmd="aws cloudformation deploy \
         --template-file ${SCRIPT_DIR}/${template_file} \
         --stack-name ${stack_name} \
         --s3-bucket ${bucket_name} \
         --s3-prefix ${S3_PREFIX} \
         --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
-        --region ${AWS_REGION}"
+        --region ${AWS_REGION} \
+        --no-fail-on-empty-changeset"
 
     if [ ${#params[@]} -gt 0 ]; then
         cmd+=" --parameter-overrides ${params[*]}"
     fi
 
-    if eval $cmd; then
+    # 백그라운드에서 이벤트 모니터링 시작 (Start event monitoring in background)
+    # PID를 저장하여 나중에 종료할 수 있도록 함 (Save PID to terminate later)
+    monitor_stack_events "$stack_name" "$start_time" &
+    local monitor_pid=$!
+
+    # 배포 실행 (Execute deployment)
+    local deploy_result=0
+    if eval $cmd 2>/dev/null; then
+        deploy_result=0
+    else
+        deploy_result=1
+    fi
+
+    # 모니터링 프로세스 종료 대기 (Wait for monitoring process to finish)
+    # 최대 5초 대기 후 강제 종료 (Wait max 5 seconds, then force kill)
+    sleep 2
+    kill $monitor_pid 2>/dev/null || true
+    wait $monitor_pid 2>/dev/null || true
+
+    echo ""
+    if [ $deploy_result -eq 0 ]; then
         log_success "$stack_name 배포 완료"
     else
-        log_error "$stack_name 배포 실패"
+        # 실패 원인 표시 (Display failure reason)
+        local final_status=$(check_stack_status "$stack_name")
+        log_error "$stack_name 배포 실패 (상태: $final_status)"
+
+        # 실패한 리소스 표시 (Display failed resources)
+        show_failed_resources "$stack_name" "$start_time"
         return 1
     fi
+}
+
+# -----------------------------------------------------------------------------
+# show_failed_resources: Display resources that failed during deployment
+# show_failed_resources: 배포 중 실패한 리소스 표시
+# -----------------------------------------------------------------------------
+show_failed_resources() {
+    local stack_name=$1
+    local start_time=$2
+
+    echo ""
+    log_error "실패한 리소스:"
+
+    aws cloudformation describe-stack-events \
+        --stack-name "$stack_name" \
+        --region "$AWS_REGION" \
+        --query "StackEvents[?ResourceStatus=='CREATE_FAILED' || ResourceStatus=='UPDATE_FAILED'].[LogicalResourceId,ResourceStatusReason]" \
+        --output text 2>/dev/null | while IFS=$'\t' read -r resource reason; do
+        if [[ -n "$resource" && "$resource" != "None" ]]; then
+            echo -e "  ${RED}$resource${NC}"
+            if [[ -n "$reason" && "$reason" != "None" ]]; then
+                echo -e "    → $reason"
+            fi
+        fi
+    done
 }
 
 # 함수: 스택 상태 확인
@@ -498,6 +566,123 @@ check_stack_status() {
         --region "$AWS_REGION" \
         --query 'Stacks[0].StackStatus' \
         --output text 2>/dev/null || echo "NOT_FOUND"
+}
+
+# =============================================================================
+# Stack Event Monitoring Functions
+# 스택 이벤트 모니터링 함수
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# monitor_stack_events: Display CloudFormation stack events in real-time
+# monitor_stack_events: CloudFormation 스택 이벤트를 실시간으로 표시
+# -----------------------------------------------------------------------------
+# Parameters (매개변수):
+#   $1 - Stack name (스택 이름)
+#   $2 - Start timestamp for filtering (필터링용 시작 타임스탬프)
+# -----------------------------------------------------------------------------
+monitor_stack_events() {
+    local stack_name=$1
+    local start_time=$2
+    local seen_events=""
+    local check_interval=3  # Check every 3 seconds (3초마다 확인)
+
+    echo ""
+    log_info "리소스 생성 진행 상황:"
+    echo "────────────────────────────────────────────────────────────────────"
+    printf "%-25s %-35s %-20s\n" "시간" "리소스" "상태"
+    echo "────────────────────────────────────────────────────────────────────"
+
+    while true; do
+        # Get current stack status (현재 스택 상태 확인)
+        local status=$(check_stack_status "$stack_name")
+
+        # Exit loop if stack operation is complete (스택 작업 완료 시 루프 종료)
+        case "$status" in
+            *COMPLETE|*FAILED|*ROLLBACK*|NOT_FOUND)
+                # Final event display (최종 이벤트 표시)
+                display_new_events "$stack_name" "$start_time" "$seen_events"
+                break
+                ;;
+        esac
+
+        # Display new events (새 이벤트 표시)
+        seen_events=$(display_new_events "$stack_name" "$start_time" "$seen_events")
+
+        sleep $check_interval
+    done
+
+    echo "────────────────────────────────────────────────────────────────────"
+}
+
+# -----------------------------------------------------------------------------
+# display_new_events: Display only new events since last check
+# display_new_events: 마지막 확인 이후의 새 이벤트만 표시
+# -----------------------------------------------------------------------------
+display_new_events() {
+    local stack_name=$1
+    local start_time=$2
+    local seen_events=$3
+
+    # Get recent events (최근 이벤트 가져오기)
+    local events=$(aws cloudformation describe-stack-events \
+        --stack-name "$stack_name" \
+        --region "$AWS_REGION" \
+        --query "StackEvents[?Timestamp>=\`$start_time\`].[EventId,Timestamp,LogicalResourceId,ResourceStatus,ResourceStatusReason]" \
+        --output text 2>/dev/null | sort -k2)
+
+    # Process and display new events (새 이벤트 처리 및 표시)
+    while IFS=$'\t' read -r event_id timestamp resource_id status reason; do
+        # Skip if already seen (이미 본 이벤트 건너뛰기)
+        if [[ "$seen_events" == *"$event_id"* ]]; then
+            continue
+        fi
+
+        # Add to seen events (확인된 이벤트에 추가)
+        seen_events="${seen_events}${event_id}:"
+
+        # Skip stack-level events for cleaner output (깔끔한 출력을 위해 스택 레벨 이벤트 건너뛰기)
+        if [[ "$resource_id" == "$stack_name" ]]; then
+            continue
+        fi
+
+        # Format timestamp (타임스탬프 형식화)
+        local short_time=$(echo "$timestamp" | sed 's/\.[0-9]*Z//' | sed 's/T/ /' | cut -d' ' -f2)
+
+        # Truncate long resource names (긴 리소스 이름 자르기)
+        local short_resource="${resource_id:0:33}"
+        if [ ${#resource_id} -gt 33 ]; then
+            short_resource="${short_resource}.."
+        fi
+
+        # Color-code status (상태별 색상 지정)
+        local status_display=""
+        case "$status" in
+            *COMPLETE)
+                status_display="${GREEN}${status}${NC}"
+                ;;
+            *IN_PROGRESS)
+                status_display="${YELLOW}${status}${NC}"
+                ;;
+            *FAILED|*ROLLBACK*)
+                status_display="${RED}${status}${NC}"
+                ;;
+            *)
+                status_display="$status"
+                ;;
+        esac
+
+        printf "%-25s %-35s " "$short_time" "$short_resource"
+        echo -e "$status_display"
+
+        # Display reason for failures (실패 시 원인 표시)
+        if [[ "$status" == *"FAILED"* && -n "$reason" && "$reason" != "None" ]]; then
+            echo -e "    ${RED}→ $reason${NC}"
+        fi
+
+    done <<< "$events"
+
+    echo "$seen_events"
 }
 
 # 함수: 스택 삭제
@@ -580,7 +765,7 @@ Commands:
 Options:
   --region REGION     AWS 리전 (미지정 시 대화형 선택)
   --model MODEL       Claude 모델 (opus-4.5 | sonnet-4 | 전체 모델 ID)
-  --db-password PWD   DB 비밀번호 (기본: ReInvent2025!)
+  --db-password PWD   DB 비밀번호 (기본: MySecurePass123!)
   --s3-bucket NAME    사용할 S3 버킷 이름 (기본: 자동 생성)
   -h, --help          도움말
 
@@ -616,6 +801,14 @@ S3 버킷:
   - 버킷 이름: netaiops-cfn-{AWS_ACCOUNT_ID}-{AWS_REGION}
   - 삭제 시 --delete-bucket 옵션으로 S3 버킷도 함께 삭제할 수 있습니다.
 
+리소스 생성 진행 상황:
+  - 배포 중 CloudFormation 리소스 생성 이벤트가 실시간으로 표시됩니다.
+  - 각 리소스의 상태가 색상으로 구분됩니다:
+    * 녹색: 완료 (CREATE_COMPLETE, UPDATE_COMPLETE)
+    * 노란색: 진행 중 (CREATE_IN_PROGRESS, UPDATE_IN_PROGRESS)
+    * 빨간색: 실패 (CREATE_FAILED, ROLLBACK)
+  - 실패 시 원인이 함께 표시됩니다.
+
 EOF
 }
 
@@ -643,7 +836,7 @@ show_status() {
 
 # 함수: 기본 인프라 배포
 deploy_base() {
-    local db_password="${1:-ReInvent2025!}"
+    local db_password="${1:-MySecurePass123!}"
     deploy_stack "$STACK_SAMPLE_APP" "sample-appication.yaml" \
         "DBPassword=$db_password"
 }
@@ -679,7 +872,7 @@ deploy_traffic() {
 
 # 함수: 전체 배포
 deploy_all() {
-    local db_password="${1:-ReInvent2025!}"
+    local db_password="${1:-MySecurePass123!}"
 
     log_info "=== NetAIOps 전체 스택 배포 시작 ==="
     echo ""
@@ -911,7 +1104,7 @@ show_config() {
 # 메인 로직
 main() {
     local command="${1:-}"
-    local db_password="ReInvent2025!"
+    local db_password="MySecurePass123!"
     local extra_args=""
     local region_from_cli=""
     local model_from_cli=""
