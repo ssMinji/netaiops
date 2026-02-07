@@ -160,7 +160,7 @@ cd cfn_stack
 ./deploy.sh deploy-all
 
 # 또는 명시적 지정
-./deploy.sh deploy-all --region us-east-1 --model opus-4.5
+./deploy.sh deploy-all --region ap-northeast-2 --model opus-4.5
 ```
 
 ### Step 2: 에이전트 설정
