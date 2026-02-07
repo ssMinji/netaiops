@@ -267,41 +267,76 @@ Resources:
             Principal:
               Service: ec2.amazonaws.com
             Action: sts:AssumeRole
+      # Bastion과 동일한 수준의 권한 (Same level as Bastion)
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
-        - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
+        - arn:aws:iam::aws:policy/PowerUserAccess
+        - arn:aws:iam::aws:policy/IAMFullAccess
       Policies:
         - PolicyName: ChatFrontendPolicy
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
-              # Bedrock AgentCore 권한
+              # SSM Parameter 접근 (Cognito, AgentCore 설정)
               - Effect: Allow
                 Action:
-                  - bedrock-agentcore:InvokeRuntime
-                  - bedrock-agentcore:GetRuntime
-                  - bedrock-agentcore:ListRuntimes
-                  - bedrock-agentcore-control:GetRuntime
-                  - bedrock-agentcore-control:ListRuntimes
-                Resource: '*'
-              # Bedrock 모델 권한
-              - Effect: Allow
-                Action:
-                  - bedrock:InvokeModel
-                  - bedrock:InvokeModelWithResponseStream
-                Resource: '*'
-              # SSM Parameter 읽기 (Cognito 설정)
-              - Effect: Allow
-                Action:
+                  - ssm:PutParameter
                   - ssm:GetParameter
                   - ssm:GetParameters
                   - ssm:GetParametersByPath
-                Resource: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/a2a/*'
-              # Cognito 토큰 발급
+                  - ssm:DeleteParameter
+                  - ssm:DeleteParameters
+                  - ssm:DescribeParameters
+                Resource:
+                  - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${AWS::StackName}/session-tokens/*'
+                  - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/*agentcore*'
+                  - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/*cognito*'
+                  - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/*troubleshooting*'
+                  - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/a2a/*'
+              # Bedrock AgentCore 권한
               - Effect: Allow
                 Action:
-                  - cognito-idp:InitiateAuth
-                  - cognito-idp:GetUser
+                  - bedrock:CreateAgentCore
+                  - bedrock:DeleteAgentCore
+                  - bedrock:GetAgentCore
+                  - bedrock:ListAgentCores
+                  - bedrock:UpdateAgentCore
+                  - bedrock:CreateAgentCoreRuntime
+                  - bedrock:DeleteAgentCoreRuntime
+                  - bedrock:GetAgentCoreRuntime
+                  - bedrock:ListAgentCoreRuntimes
+                  - bedrock:UpdateAgentCoreRuntime
+                  - bedrock:InvokeAgentCore
+                  - bedrock-agentcore:GetWorkloadAccessTokenForJWT
+                  - bedrock-agentcore:InvokeRuntime
+                  - bedrock-agentcore:GetWorkloadAccessToken
+                Resource: '*'
+              # RDS 조회 권한
+              - Effect: Allow
+                Action:
+                  - rds:DescribeDBInstances
+                  - rds:DescribeDBClusters
+                  - rds:DescribeDBSubnetGroups
+                  - rds:DescribeDBParameterGroups
+                  - rds:DescribeDBClusterParameterGroups
+                  - rds:ListTagsForResource
+                Resource: '*'
+              # CloudWatch 권한
+              - Effect: Allow
+                Action:
+                  - cloudwatch:ListMetrics
+                  - cloudwatch:GetMetricStatistics
+                  - cloudwatch:GetMetricData
+                  - cloudwatch:DescribeAlarms
+                  - cloudwatch:PutMetricData
+                Resource: '*'
+              # Lambda 권한
+              - Effect: Allow
+                Action:
+                  - lambda:ListFunctions
+                  - lambda:GetFunction
+                  - lambda:GetFunctionConfiguration
+                  - lambda:InvokeFunction
                 Resource: '*'
       Tags:
         - Key: Name
