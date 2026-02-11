@@ -123,7 +123,7 @@ os.environ["STRANDS_TOOL_CONSOLE_MODE"] = "enabled"
 # =============================================================================
 # Default model ID - Supports env var override for flexibility
 # 기본 모델 ID - 유연성을 위해 환경변수 오버라이드 지원
-DEFAULT_MODEL_ID = "global.anthropic.claude-opus-4-5-20251101-v1:0"
+DEFAULT_MODEL_ID = "global.anthropic.claude-opus-4-6-v1"
 
 # =============================================================================
 # Logging Configuration (로깅 설정)

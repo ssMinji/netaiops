@@ -46,7 +46,7 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 # Default model ID - Can be overridden via BEDROCK_MODEL_ID environment variable
 # 기본 모델 ID - BEDROCK_MODEL_ID 환경변수로 오버라이드 가능
-DEFAULT_MODEL_ID = "global.anthropic.claude-opus-4-5-20251101-v1:0"
+DEFAULT_MODEL_ID = "global.anthropic.claude-opus-4-6-v1"
 
 
 class TroubleshootingAgent:

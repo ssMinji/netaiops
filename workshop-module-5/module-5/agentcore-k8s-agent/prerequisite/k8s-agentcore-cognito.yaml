@@ -1,0 +1,483 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'K8s Diagnostics Agent - Cognito + IAM + SSM (Module 5)'
+
+Parameters:
+  UserPoolName:
+    Type: String
+    Default: 'K8sAgentPool'
+  MachineAppClientName:
+    Type: String
+    Default: 'K8sMachineClient'
+  WebAppClientName:
+    Type: String
+    Default: 'K8sWebClient'
+
+Resources:
+
+  # ========== Cognito User Pool ==========
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Ref UserPoolName
+      MfaConfiguration: 'OFF'
+      UsernameConfiguration:
+        CaseSensitive: false
+      UsernameAttributes:
+        - email
+      AutoVerifiedAttributes:
+        - email
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: false
+          RequireUppercase: true
+
+  AdminGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      GroupName: admin
+      UserPoolId: !Ref UserPool
+      Precedence: 1
+
+  UserGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      GroupName: user
+      UserPoolId: !Ref UserPool
+      Precedence: 2
+
+  # ========== Resource Server (OAuth2 scopes) ==========
+  ResourceServer:
+    Type: AWS::Cognito::UserPoolResourceServer
+    Properties:
+      UserPoolId: !Ref UserPool
+      Identifier: !Join
+        - '-'
+        - - 'netops-a2a-server'
+          - !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]]
+      Name: !Join
+        - '-'
+        - - 'NetOps K8s Server'
+          - !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]]
+      Scopes:
+        - ScopeName: 'gateway:read'
+          ScopeDescription: 'Read access'
+        - ScopeName: 'gateway:write'
+          ScopeDescription: 'Write access'
+        - ScopeName: 'invoke'
+          ScopeDescription: 'Invoke K8s agent runtime'
+
+  # ========== Web Client (PKCE auth for test_agent.py) ==========
+  WebUserPoolClient:
+    DependsOn: ResourceServer
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Ref WebAppClientName
+      UserPoolId: !Ref UserPool
+      GenerateSecret: false
+      AllowedOAuthFlows:
+        - code
+      AllowedOAuthScopes:
+        - openid
+        - email
+        - profile
+        - !Join ['', ['netops-a2a-server-', !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]], '/gateway:read']]
+        - !Join ['', ['netops-a2a-server-', !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]], '/gateway:write']]
+      AllowedOAuthFlowsUserPoolClient: true
+      CallbackURLs:
+        - http://localhost:8501/
+        - https://example.com/auth/callback
+      LogoutURLs:
+        - http://localhost:8501/
+      SupportedIdentityProviders:
+        - COGNITO
+      AccessTokenValidity: 60
+      IdTokenValidity: 60
+      RefreshTokenValidity: 30
+      TokenValidityUnits:
+        AccessToken: minutes
+        IdToken: minutes
+        RefreshToken: days
+
+  # ========== Machine Client (M2M auth for agent runtime) ==========
+  MachineUserPoolClient:
+    DependsOn: ResourceServer
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Ref MachineAppClientName
+      UserPoolId: !Ref UserPool
+      GenerateSecret: true
+      ExplicitAuthFlows:
+        - ALLOW_REFRESH_TOKEN_AUTH
+      AllowedOAuthFlows:
+        - client_credentials
+      AllowedOAuthScopes:
+        - !Join ['', ['netops-a2a-server-', !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]], '/gateway:read']]
+        - !Join ['', ['netops-a2a-server-', !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]], '/gateway:write']]
+      AllowedOAuthFlowsUserPoolClient: true
+      SupportedIdentityProviders:
+        - COGNITO
+      AccessTokenValidity: 60
+      IdTokenValidity: 60
+      RefreshTokenValidity: 1
+      TokenValidityUnits:
+        AccessToken: minutes
+        IdToken: minutes
+        RefreshToken: days
+
+  # ========== Cognito Domain ==========
+  UserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      UserPoolId: !Ref UserPool
+      Domain: !Join ['', ['k8sagent-', !Ref 'AWS::AccountId', '-', !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]]]]
+
+  # ========== IAM Execution Role (EKS + AgentCore permissions) ==========
+  AgentCoreExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${AWS::StackName}-gateway-execution-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - bedrock-agentcore.amazonaws.com
+                - lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: K8sAgentCoreExecutionPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # ECR
+              - Effect: Allow
+                Action:
+                  - ecr:GetAuthorizationToken
+                  - ecr:BatchGetImage
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchCheckLayerAvailability
+                Resource: '*'
+              # Bedrock AgentCore control + runtime
+              - Effect: Allow
+                Action:
+                  - bedrock-agentcore-control:*
+                  - bedrock-agentcore:*
+                Resource: '*'
+              # Bedrock model invocation
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                  - bedrock:GetFoundationModel
+                  - bedrock:ListFoundationModels
+                  - bedrock:GetInferenceProfile
+                  - bedrock:ListInferenceProfiles
+                Resource:
+                  - 'arn:aws:bedrock:*::foundation-model/*'
+                  - !Sub 'arn:aws:bedrock:*:${AWS::AccountId}:inference-profile/*'
+              # EKS (read-only for diagnostics)
+              - Effect: Allow
+                Action:
+                  - eks:DescribeCluster
+                  - eks:ListClusters
+                  - eks:DescribeNodegroup
+                  - eks:ListNodegroups
+                  - eks:DescribeFargateProfile
+                  - eks:ListFargateProfiles
+                  - eks:DescribeAddon
+                  - eks:ListAddons
+                  - eks:DescribeUpdate
+                  - eks:ListUpdates
+                  - eks:ListInsights
+                  - eks:DescribeInsight
+                  - eks:AccessKubernetesApi
+                Resource: '*'
+              # CloudWatch Logs + Metrics (Container Insights)
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - logs:DescribeLogGroups
+                  - logs:DescribeLogStreams
+                  - logs:StartQuery
+                  - logs:StopQuery
+                  - logs:GetQueryResults
+                  - logs:FilterLogEvents
+                  - logs:GetLogEvents
+                  - cloudwatch:GetMetricStatistics
+                  - cloudwatch:GetMetricData
+                  - cloudwatch:ListMetrics
+                  - cloudwatch:DescribeAlarms
+                Resource: '*'
+              # EC2/VPC (for get_eks_vpc_config)
+              - Effect: Allow
+                Action:
+                  - ec2:DescribeVpcs
+                  - ec2:DescribeSubnets
+                  - ec2:DescribeSecurityGroups
+                  - ec2:DescribeRouteTables
+                  - ec2:DescribeNetworkInterfaces
+                  - ec2:DescribeNetworkAcls
+                  - ec2:DescribeAvailabilityZones
+                Resource: '*'
+              # IAM (for get_policies_for_role)
+              - Effect: Allow
+                Action:
+                  - iam:GetRole
+                  - iam:PassRole
+                  - iam:ListAttachedRolePolicies
+                  - iam:ListRolePolicies
+                  - iam:GetRolePolicy
+                  - iam:GetPolicy
+                  - iam:GetPolicyVersion
+                  - iam:CreateServiceLinkedRole
+                Resource: '*'
+              # SSM
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                  - ssm:GetParameters
+                  - ssm:GetParametersByPath
+                  - ssm:PutParameter
+                Resource:
+                  - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/a2a/app/k8s/*'
+              # CloudFormation (for manage_eks_stacks)
+              - Effect: Allow
+                Action:
+                  - cloudformation:DescribeStacks
+                  - cloudformation:ListStacks
+                  - cloudformation:DescribeStackResources
+                Resource: '*'
+              # Secrets Manager + KMS
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                  - secretsmanager:DescribeSecret
+                  - kms:Decrypt
+                  - kms:DescribeKey
+                Resource: '*'
+              # X-Ray tracing
+              - Effect: Allow
+                Action:
+                  - xray:PutTraceSegments
+                  - xray:PutTelemetryRecords
+                  - xray:GetSamplingRules
+                  - xray:GetSamplingTargets
+                Resource: '*'
+              # Memory service
+              - Effect: Allow
+                Action:
+                  - bedrock-agentcore-memory:*
+                Resource:
+                  - !Sub 'arn:aws:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:memory/*'
+
+  # ========== SSM Parameters ==========
+  MachineClientIdParam:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: '/a2a/app/k8s/agentcore/machine_client_id'
+      Type: String
+      Value: !Ref MachineUserPoolClient
+
+  MachineClientSecretParam:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: '/a2a/app/k8s/agentcore/machine_client_secret'
+      Type: String
+      Value: !GetAtt MachineUserPoolClient.ClientSecret
+
+  WebClientIdParam:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: '/a2a/app/k8s/agentcore/web_client_id'
+      Type: String
+      Value: !Ref WebUserPoolClient
+
+  UserPoolIdParam:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: '/a2a/app/k8s/agentcore/userpool_id'
+      Type: String
+      Value: !Ref UserPool
+
+  CognitoProviderParam:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: '/a2a/app/k8s/agentcore/cognito_provider'
+      Type: String
+      Value: !Join ['', ['a2a-k8s-', !Ref 'AWS::AccountId', '-', !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]]]]
+
+  CognitoAuthScopeParam:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: '/a2a/app/k8s/agentcore/cognito_auth_scope'
+      Type: String
+      Value: !Join
+        - ' '
+        - - !Join ['', ['netops-a2a-server-', !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]], '/gateway:read']]
+          - !Join ['', ['netops-a2a-server-', !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]], '/gateway:write']]
+
+  CognitoDiscoveryURLParam:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: '/a2a/app/k8s/agentcore/cognito_discovery_url'
+      Type: String
+      Value: !Sub 'https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPool}/.well-known/openid-configuration'
+
+  CognitoTokenURLParam:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: '/a2a/app/k8s/agentcore/cognito_token_url'
+      Type: String
+      Value: !Join ['', [!Sub 'https://k8sagent-${AWS::AccountId}-', !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]], !Sub '.auth.${AWS::Region}.amazoncognito.com/oauth2/token']]
+
+  CognitoAuthURLParam:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: '/a2a/app/k8s/agentcore/cognito_auth_url'
+      Type: String
+      Value: !Join ['', [!Sub 'https://k8sagent-${AWS::AccountId}-', !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]], !Sub '.auth.${AWS::Region}.amazoncognito.com/oauth2/authorize']]
+
+  CognitoDomainParam:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: '/a2a/app/k8s/agentcore/cognito_domain'
+      Type: String
+      Value: !Join ['', [!Sub 'https://k8sagent-${AWS::AccountId}-', !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]], !Sub '.auth.${AWS::Region}.amazoncognito.com']]
+
+  GatewayIAMRoleParam:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: '/a2a/app/k8s/agentcore/gateway_iam_role'
+      Type: String
+      Value: !GetAtt AgentCoreExecutionRole.Arn
+
+  # ========== Runtime Cognito (Gateway → MCP Runtime auth) ==========
+  # Separate User Pool for the MCP Runtime authorizer.
+  # The Gateway authenticates to the Runtime using OAuth2 client_credentials
+  # obtained from this pool, following the official agentcore-mcp-toolkit pattern.
+  RuntimeUserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: 'EksMcpServerPool'
+      MfaConfiguration: 'OFF'
+      UsernameConfiguration:
+        CaseSensitive: false
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: false
+          RequireUppercase: true
+
+  RuntimeResourceServer:
+    Type: AWS::Cognito::UserPoolResourceServer
+    Properties:
+      UserPoolId: !Ref RuntimeUserPool
+      Identifier: !Join
+        - '-'
+        - - 'eks-mcp-server'
+          - !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]]
+      Name: 'EKS MCP Server'
+      Scopes:
+        - ScopeName: 'invoke'
+          ScopeDescription: 'Invoke EKS MCP Server'
+
+  RuntimeMachineClient:
+    DependsOn: RuntimeResourceServer
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: 'EksMcpServerClient'
+      UserPoolId: !Ref RuntimeUserPool
+      GenerateSecret: true
+      ExplicitAuthFlows:
+        - ALLOW_REFRESH_TOKEN_AUTH
+      AllowedOAuthFlows:
+        - client_credentials
+      AllowedOAuthScopes:
+        - !Join ['', ['eks-mcp-server-', !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]], '/invoke']]
+      AllowedOAuthFlowsUserPoolClient: true
+      SupportedIdentityProviders:
+        - COGNITO
+      AccessTokenValidity: 60
+      IdTokenValidity: 60
+      RefreshTokenValidity: 1
+      TokenValidityUnits:
+        AccessToken: minutes
+        IdToken: minutes
+        RefreshToken: days
+
+  RuntimeUserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      UserPoolId: !Ref RuntimeUserPool
+      Domain: !Join ['', ['eks-mcp-', !Ref 'AWS::AccountId', '-', !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]]]]
+
+  # ========== Runtime Cognito SSM Parameters ==========
+  RuntimePoolIdParam:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: '/a2a/app/k8s/agentcore/eks_mcp_pool_id'
+      Type: String
+      Value: !Ref RuntimeUserPool
+
+  RuntimeClientIdParam:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: '/a2a/app/k8s/agentcore/eks_mcp_client_id'
+      Type: String
+      Value: !Ref RuntimeMachineClient
+
+  RuntimeClientSecretParam:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: '/a2a/app/k8s/agentcore/eks_mcp_client_secret'
+      Type: String
+      Value: !GetAtt RuntimeMachineClient.ClientSecret
+
+  RuntimeDiscoveryUrlParam:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: '/a2a/app/k8s/agentcore/eks_mcp_discovery_url'
+      Type: String
+      Value: !Sub 'https://cognito-idp.${AWS::Region}.amazonaws.com/${RuntimeUserPool}/.well-known/openid-configuration'
+
+  RuntimeTokenUrlParam:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: '/a2a/app/k8s/agentcore/eks_mcp_token_url'
+      Type: String
+      Value: !Join ['', [!Sub 'https://eks-mcp-${AWS::AccountId}-', !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]], !Sub '.auth.${AWS::Region}.amazoncognito.com/oauth2/token']]
+
+  RuntimeAuthScopeParam:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: '/a2a/app/k8s/agentcore/eks_mcp_auth_scope'
+      Type: String
+      Value: !Join ['', ['eks-mcp-server-', !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]], '/invoke']]
+
+Outputs:
+  UserPoolId:
+    Value: !Ref UserPool
+    Export:
+      Name: !Sub "${AWS::StackName}-UserPoolId"
+  WebClientId:
+    Value: !Ref WebUserPoolClient
+  MachineClientId:
+    Value: !Ref MachineUserPoolClient
+  CognitoDomain:
+    Value: !Join ['', [!Sub 'https://k8sagent-${AWS::AccountId}-', !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]], !Sub '.auth.${AWS::Region}.amazoncognito.com']]
+  ExecutionRoleArn:
+    Value: !GetAtt AgentCoreExecutionRole.Arn
+  RuntimePoolId:
+    Value: !Ref RuntimeUserPool
+  RuntimeClientId:
+    Value: !Ref RuntimeMachineClient

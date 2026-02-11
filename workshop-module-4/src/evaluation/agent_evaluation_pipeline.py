@@ -52,7 +52,7 @@ from typing import Dict, List, Optional, Any
 # =============================================================================
 # Default model ID for LLM Judge - Supports env var override
 # LLM Judge용 기본 모델 ID - 환경변수 오버라이드 지원
-DEFAULT_MODEL_ID = "global.anthropic.claude-opus-4-5-20251101-v1:0"
+DEFAULT_MODEL_ID = "global.anthropic.claude-opus-4-6-v1"
 
 # Import AgentCore client and configuration loader
 from .agentcore_client import AgentCoreClient

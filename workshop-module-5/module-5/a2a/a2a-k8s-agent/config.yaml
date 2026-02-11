@@ -1,0 +1,54 @@
+agent_card_info:
+  agent_arn: ""
+  agent_tags:
+  - kubernetes
+  - eks
+  - diagnostics
+  - pod-health
+  - node-health
+  - deployment-status
+  - agentcore
+  client_id: ""
+  discovery_url: ""
+  identity_group: ""
+  scope: ""
+agent_metadata:
+  capabilities:
+    push_notifications: true
+    streaming: true
+  description: Routes requests to a Bedrock AgentCore runtime that provides comprehensive EKS
+    cluster diagnostics using the official AWS Labs eks-mcp-server, including K8s resource
+    management, pod logs, events, CloudWatch metrics, VPC config, and troubleshooting.
+  name: K8s_Diagnostics_Agent
+  supported_content_types:
+  - text/plain
+  version: 1.0.0
+agent_skills:
+- description: Comprehensive EKS cluster diagnostics using the official AWS Labs eks-mcp-server.
+    Supports K8s resource listing/management, pod logs, events, CloudWatch logs/metrics,
+    VPC configuration, IAM policies, EKS Insights, and troubleshooting knowledge base.
+  examples:
+  - Check pod status in my EKS cluster
+  - Analyze node health and capacity for sample-eks-cluster
+  - What is the deployment rollout status in the default namespace?
+  - Get pod logs for the failing container
+  - Show me Kubernetes events for the crashing pod
+  - Get CPU and memory metrics from CloudWatch Container Insights
+  - Check the VPC configuration for my EKS cluster
+  - Search the EKS troubleshooting guide for ImagePullBackOff
+  id: eks_diagnostics
+  name: EKS Cluster Diagnostics
+  tags:
+  - eks-diagnostics
+  - kubernetes
+  - pod-logs
+  - cloudwatch
+  - vpc-config
+  - troubleshooting
+  - container-insights
+executor_config:
+  stream: true
+  request_timeout_s: 900
+server:
+  default_host: 0.0.0.0
+  default_port: 10009

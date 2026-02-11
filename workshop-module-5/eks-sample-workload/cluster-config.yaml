@@ -1,0 +1,43 @@
+---
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+
+metadata:
+  name: netaiops-eks-cluster
+  region: us-west-2
+  version: "1.31"
+
+# Managed node group configuration
+managedNodeGroups:
+  - name: ng-default
+    instanceType: m5.large
+    desiredCapacity: 2
+    minSize: 2
+    maxSize: 3
+    volumeSize: 30
+    labels:
+      role: workers
+
+# CloudWatch logging for control plane
+cloudWatch:
+  clusterLogging:
+    enableTypes:
+      - api
+      - audit
+      - authenticator
+      - controllerManager
+      - scheduler
+
+# CloudWatch Container Insights addon
+addons:
+  - name: amazon-cloudwatch-observability
+    version: latest
+
+# Enable IAM OIDC provider for service accounts
+iam:
+  withOIDC: true
+
+# VPC configuration with single NAT gateway
+vpc:
+  nat:
+    gateway: Single

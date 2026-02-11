@@ -1,0 +1,71 @@
+default_agent: a2a_k8s_agent_runtime
+agents:
+  a2a_k8s_agent_runtime:
+    name: a2a_k8s_agent_runtime
+    language: python
+    node_version: null
+    entrypoint: main.py
+    deployment_type: container
+    runtime_type: null
+    platform: linux/arm64
+    container_runtime: docker
+    source_path: .
+    aws:
+      execution_role: arn:aws:iam::175678592674:role/AmazonBedrockAgentCoreSDKRuntime-us-east-1-59606a8f05
+      execution_role_auto_create: false
+      account: '175678592674'
+      region: us-east-1
+      ecr_repository: 175678592674.dkr.ecr.us-east-1.amazonaws.com/bedrock-agentcore-a2a_k8s_agent_runtime
+      ecr_auto_create: false
+      s3_path: null
+      s3_auto_create: false
+      network_configuration:
+        network_mode: PUBLIC
+        network_mode_config: null
+      protocol_configuration:
+        server_protocol: HTTP
+      observability:
+        enabled: true
+      lifecycle_configuration:
+        idle_runtime_session_timeout: null
+        max_lifetime: null
+    bedrock_agentcore:
+      agent_id: a2a_k8s_agent_runtime-f2D7u5BpR1
+      agent_arn: arn:aws:bedrock-agentcore:us-east-1:175678592674:runtime/a2a_k8s_agent_runtime-f2D7u5BpR1
+      agent_session_id: 3d456cda-2426-44ca-9006-29722c37ba23
+    codebuild:
+      project_name: bedrock-agentcore-a2a_k8s_agent_runtime-builder
+      execution_role: arn:aws:iam::175678592674:role/AmazonBedrockAgentCoreSDKCodeBuild-us-east-1-59606a8f05
+      source_bucket: bedrock-agentcore-codebuild-sources-175678592674-us-east-1
+    memory:
+      mode: STM_ONLY
+      memory_id: a2a_k8s_agent_runtime_mem-rqrPIRCKTr
+      memory_arn: arn:aws:bedrock-agentcore:us-east-1:175678592674:memory/a2a_k8s_agent_runtime_mem-rqrPIRCKTr
+      memory_name: a2a_k8s_agent_runtime_mem
+      event_expiry_days: 30
+      first_invoke_memory_check_done: true
+      was_created_by_toolkit: true
+    identity:
+      credential_providers:
+      - name: a2a-k8s-175678592674-934a9e70
+        arn: arn:aws:bedrock-agentcore:us-east-1:175678592674:token-vault/default/oauth2credentialprovider/a2a-k8s-175678592674-934a9e70
+        type: cognito
+        callback_url: https://bedrock-agentcore.us-east-1.amazonaws.com/identities/oauth2/callback/c4b1bb4f-b6c0-4e87-94a2-bbbf035e018e
+      workload: null
+    aws_jwt:
+      enabled: false
+      audiences: []
+      signing_algorithm: ES384
+      issuer_url: null
+      duration_seconds: 300
+    authorizer_configuration:
+      customJWTAuthorizer:
+        allowedClients:
+        - 33s7k0inobk04ig4b0f65sbar7
+        - 1n9ddme82gm3rdqoulbbfpd6m1
+        discoveryUrl: https://cognito-idp.us-east-1.amazonaws.com/us-east-1_u0optd8ZK/.well-known/openid-configuration
+    request_header_configuration: null
+    oauth_configuration: null
+    api_key_env_var_name: null
+    api_key_credential_provider_name: null
+    is_generated_by_agentcore_create: false
