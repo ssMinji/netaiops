@@ -1,0 +1,1109 @@
+{
+  "version": "48.0.0",
+  "artifacts": {
+    "NetAIOpsInfraStack.assets": {
+      "type": "cdk:asset-manifest",
+      "properties": {
+        "file": "NetAIOpsInfraStack.assets.json",
+        "requiresBootstrapStackVersion": 6,
+        "bootstrapStackVersionSsmParameter": "/cdk-bootstrap/hnb659fds/version"
+      }
+    },
+    "NetAIOpsInfraStack": {
+      "type": "aws:cloudformation:stack",
+      "environment": "aws://175678592674/us-east-1",
+      "properties": {
+        "templateFile": "NetAIOpsInfraStack.template.json",
+        "terminationProtection": false,
+        "validateOnSynth": false,
+        "assumeRoleArn": "arn:${AWS::Partition}:iam::175678592674:role/cdk-hnb659fds-deploy-role-175678592674-us-east-1",
+        "cloudFormationExecutionRoleArn": "arn:${AWS::Partition}:iam::175678592674:role/cdk-hnb659fds-cfn-exec-role-175678592674-us-east-1",
+        "stackTemplateAssetObjectUrl": "s3://cdk-hnb659fds-assets-175678592674-us-east-1/c5e8d43b4450085182f8051d32cf80e5d4fb4e8cd4d951bacda0446e12234870.json",
+        "requiresBootstrapStackVersion": 6,
+        "bootstrapStackVersionSsmParameter": "/cdk-bootstrap/hnb659fds/version",
+        "additionalDependencies": [
+          "NetAIOpsInfraStack.assets"
+        ],
+        "lookupRole": {
+          "arn": "arn:${AWS::Partition}:iam::175678592674:role/cdk-hnb659fds-lookup-role-175678592674-us-east-1",
+          "requiresBootstrapStackVersion": 8,
+          "bootstrapStackVersionSsmParameter": "/cdk-bootstrap/hnb659fds/version"
+        }
+      },
+      "dependencies": [
+        "NetAIOpsInfraStack.assets"
+      ],
+      "metadata": {
+        "/NetAIOpsInfraStack/Module5/Cognito/AgentAuth/UserPool/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "CognitoAgentAuthUserPool79DB0993"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module5/Cognito/AgentAuth/UserPool/ResourceServer/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "CognitoAgentAuthUserPoolResourceServerB4EBAB0D"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module5/Cognito/AgentAuth/UserPool/MachineClient/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "CognitoAgentAuthUserPoolMachineClient981BAE25"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module5/Cognito/AgentAuth/UserPool/WebClient/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "CognitoAgentAuthUserPoolWebClient6DB119B9"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module5/Cognito/AgentAuth/UserPool/Domain/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "CognitoAgentAuthUserPoolDomainE10CDEF9"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module5/Cognito/AgentAuth/AdminGroup": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "CognitoAgentAuthAdminGroup5AA8D9B6"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module5/Cognito/AgentAuth/UserGroup": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "CognitoAgentAuthUserGroup5AA08307"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module5/Cognito/AgentAuth/Param-userpool_id/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "CognitoAgentAuthParamuserpoolid099CAB4E"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module5/Cognito/AgentAuth/Param-machine_client_id/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "CognitoAgentAuthParammachineclientidDE903921"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module5/Cognito/AgentAuth/Param-cognito_discovery_url/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "CognitoAgentAuthParamcognitodiscoveryurlB02669F4"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module5/Cognito/AgentAuth/Param-cognito_token_url/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "CognitoAgentAuthParamcognitotokenurl6147470E"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module5/Cognito/AgentAuth/Param-cognito_auth_url/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "CognitoAgentAuthParamcognitoauthurl22CDBE6B"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module5/Cognito/AgentAuth/Param-cognito_domain/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "CognitoAgentAuthParamcognitodomainFF566F30"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module5/Cognito/AgentAuth/Param-cognito_auth_scope/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "CognitoAgentAuthParamcognitoauthscope509A23B6"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module5/Cognito/AgentAuth/Param-web_client_id/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "CognitoAgentAuthParamwebclientidED0477CB"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module5/Cognito/AgentAuth/Param-cognito_provider/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "CognitoAgentAuthParamcognitoproviderD40E4DB4"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module5/Cognito/AgentAuth/Param-machine_client_secret": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "CognitoAgentAuthParammachineclientsecret2CFA4990"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module5/Cognito/RuntimeAuth/UserPool/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "CognitoRuntimeAuthUserPool211F04C3"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module5/Cognito/RuntimeAuth/UserPool/ResourceServer/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "CognitoRuntimeAuthUserPoolResourceServer0A03E06C"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module5/Cognito/RuntimeAuth/UserPool/MachineClient/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "CognitoRuntimeAuthUserPoolMachineClient1E3AD85F"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module5/Cognito/RuntimeAuth/UserPool/Domain/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "CognitoRuntimeAuthUserPoolDomain61EBF7D4"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module5/Cognito/RuntimeAuth/AdminGroup": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "CognitoRuntimeAuthAdminGroup00F0F156"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module5/Cognito/RuntimeAuth/UserGroup": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "CognitoRuntimeAuthUserGroup41626D63"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module5/Cognito/RuntimeAuth/Param-eks_mcp_userpool_id/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "CognitoRuntimeAuthParameksmcpuserpoolid535F4047"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module5/Cognito/RuntimeAuth/Param-eks_mcp_machine_client_id/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "CognitoRuntimeAuthParameksmcpmachineclientid0973FF1B"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module5/Cognito/RuntimeAuth/Param-eks_mcp_cognito_discovery_url/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "CognitoRuntimeAuthParameksmcpcognitodiscoveryurl954D1EEF"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module5/Cognito/RuntimeAuth/Param-eks_mcp_cognito_token_url/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "CognitoRuntimeAuthParameksmcpcognitotokenurl358FFFEB"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module5/Cognito/RuntimeAuth/Param-eks_mcp_cognito_auth_url/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "CognitoRuntimeAuthParameksmcpcognitoauthurlF10E217B"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module5/Cognito/RuntimeAuth/Param-eks_mcp_cognito_domain/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "CognitoRuntimeAuthParameksmcpcognitodomainDEE3E733"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module5/Cognito/RuntimeAuth/Param-eks_mcp_cognito_auth_scope/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "CognitoRuntimeAuthParameksmcpcognitoauthscope77D8EEE5"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module5/Cognito/RuntimeAuth/Param-eks_mcp_cognito_provider/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "CognitoRuntimeAuthParameksmcpcognitoprovider7DE1653E"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module5/Cognito/RuntimeAuth/Param-eks_mcp_machine_client_secret": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "CognitoRuntimeAuthParameksmcpmachineclientsecret2042F5F5"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module5/Cognito/ExecutionRole/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "CognitoExecutionRoleF6227C07"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module5/Cognito/ExecutionRole/DefaultPolicy/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "CognitoExecutionRoleDefaultPolicy507D9598"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module5/Cognito/ExecutionRoleParam/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "CognitoExecutionRoleParamA3146552"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module5/Gateway/OAuth2Provider/Provider": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "GatewayOAuth2Provider8F24691D"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module5/Gateway/Gateway/Gateway": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "GatewayD4406D74"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module5/Gateway/Gateway/Target-EksMcpServer": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "GatewayTargetEksMcpServer0E393CE2"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module5/Gateway/Gateway/GatewayIdParam/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "GatewayGatewayIdParam71AC8AA6"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module5/Gateway/Gateway/GatewayNameParam/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "GatewayGatewayNameParam6AC27475"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module5/Gateway/Gateway/GatewayArnParam/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "GatewayGatewayArnParam55F4B992"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module5/Gateway/Gateway/GatewayUrlParam/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "GatewayGatewayUrlParam532CB67A"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module5/SsmParameterValue:--a2a--app--k8s--agentcore--eks_mcp_server_arn:C96584B6-F00A-464E-AD19-53AFF4B05118.Parameter": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "SsmParameterValuea2aappk8sagentcoreeksmcpserverarnC96584B6F00A464EAD1953AFF4B05118Parameter"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module5/Runtime/Runtime": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "Runtime33C31BF9"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module5/Runtime/RuntimeArnParam/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "RuntimeRuntimeArnParam7730D90D"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module5/Runtime/RuntimeNameParam/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "RuntimeRuntimeNameParamF9AC84C8"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module5/CDKMetadata/Default": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "CDKMetadata"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module5.NestedStack/Module5.NestedStackResource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "Module5NestedStackModule5NestedStackResourceCF75426F"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module6/Cognito/Auth/UserPool/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "CognitoAuthUserPoolF3109634"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module6/Cognito/Auth/UserPool/ResourceServer/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "CognitoAuthUserPoolResourceServerC459EC4E"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module6/Cognito/Auth/UserPool/MachineClient/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "CognitoAuthUserPoolMachineClient59D678FA"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module6/Cognito/Auth/UserPool/WebClient/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "CognitoAuthUserPoolWebClient2044EECF"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module6/Cognito/Auth/UserPool/Domain/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "CognitoAuthUserPoolDomain8A02E454"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module6/Cognito/Auth/AdminGroup": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "CognitoAuthAdminGroup3CFA449A"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module6/Cognito/Auth/UserGroup": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "CognitoAuthUserGroup250D7F94"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module6/Cognito/Auth/Param-userpool_id/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "CognitoAuthParamuserpoolid1E587840"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module6/Cognito/Auth/Param-machine_client_id/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "CognitoAuthParammachineclientid2A638E59"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module6/Cognito/Auth/Param-cognito_discovery_url/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "CognitoAuthParamcognitodiscoveryurl61A8B430"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module6/Cognito/Auth/Param-cognito_token_url/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "CognitoAuthParamcognitotokenurl6B11EDC3"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module6/Cognito/Auth/Param-cognito_auth_url/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "CognitoAuthParamcognitoauthurl0949CB91"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module6/Cognito/Auth/Param-cognito_domain/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "CognitoAuthParamcognitodomain8278040E"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module6/Cognito/Auth/Param-cognito_auth_scope/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "CognitoAuthParamcognitoauthscopeCEE1623E"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module6/Cognito/Auth/Param-web_client_id/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "CognitoAuthParamwebclientid0E07CFED"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module6/Cognito/Auth/Param-cognito_provider/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "CognitoAuthParamcognitoprovider9F756036"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module6/Cognito/Auth/Param-machine_client_secret": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "CognitoAuthParammachineclientsecret9BA43012"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module6/Cognito/ExecutionRole/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "CognitoExecutionRoleF6227C07"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module6/Cognito/ExecutionRole/DefaultPolicy/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "CognitoExecutionRoleDefaultPolicy507D9598"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module6/Cognito/ExecutionRoleParam/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "CognitoExecutionRoleParamA3146552"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module6/Cognito/LambdaRole/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "CognitoLambdaRoleD35B0D4A"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module6/Cognito/LambdaRole/DefaultPolicy/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "CognitoLambdaRoleDefaultPolicy80A303F7"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module6/Lambdas/Datadog/Function/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "LambdasDatadogFunction361874F0"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module6/Lambdas/OpenSearch/Function/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "LambdasOpenSearchFunctionA26DA9A7"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module6/Lambdas/ContainerInsight/Function/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "LambdasContainerInsightFunction0164A2B7"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module6/Lambdas/Chaos/Function/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "LambdasChaosFunction3D2464FC"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module6/Lambdas/AlarmTrigger/Function/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "LambdasAlarmTriggerFunctionF72FAE0C"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module6/Lambdas/GitHub/Function/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "LambdasGitHubFunctionF747E7FD"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module6/Lambdas/Param-datadog_lambda_arn/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "LambdasParamdatadoglambdaarn6FF5E5AD"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module6/Lambdas/Param-opensearch_lambda_arn/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "LambdasParamopensearchlambdaarnF048C7CB"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module6/Lambdas/Param-container_insight_lambda_arn/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "LambdasParamcontainerinsightlambdaarn26AA934D"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module6/Lambdas/Param-chaos_lambda_arn/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "LambdasParamchaoslambdaarn4264628E"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module6/Lambdas/Param-alarm_trigger_lambda_arn/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "LambdasParamalarmtriggerlambdaarn8C7E2113"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module6/Lambdas/Param-github_lambda_arn/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "LambdasParamgithublambdaarn4107F2F6"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module6/Gateway/Gateway/Gateway": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "GatewayD4406D74"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module6/Gateway/Gateway/Target-DatadogTools": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "GatewayTargetDatadogTools4FEA445B"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module6/Gateway/Gateway/Target-OpenSearchTools": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "GatewayTargetOpenSearchTools05AD1673"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module6/Gateway/Gateway/Target-ContainerInsightTools": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "GatewayTargetContainerInsightTools7D99D4A8"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module6/Gateway/Gateway/GatewayIdParam/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "GatewayGatewayIdParam71AC8AA6"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module6/Gateway/Gateway/GatewayNameParam/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "GatewayGatewayNameParam6AC27475"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module6/Gateway/Gateway/GatewayArnParam/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "GatewayGatewayArnParam55F4B992"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module6/Gateway/Gateway/GatewayUrlParam/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "GatewayGatewayUrlParam532CB67A"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module6/Runtime/Runtime": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "Runtime33C31BF9"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module6/Runtime/RuntimeArnParam/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "RuntimeRuntimeArnParam7730D90D"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module6/Runtime/RuntimeNameParam/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "RuntimeRuntimeNameParamF9AC84C8"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module6/Monitoring/Alarms/Handler/ServiceRole/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "MonitoringAlarmsHandlerServiceRoleC86F8684"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module6/Monitoring/Alarms/Handler/ServiceRole/DefaultPolicy/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "MonitoringAlarmsHandlerServiceRoleDefaultPolicyA4D0541E"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module6/Monitoring/Alarms/Handler/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "MonitoringAlarmsHandler5CA8C266"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module6/Monitoring/Alarms/Provider/framework-onEvent/ServiceRole/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "MonitoringAlarmsProviderframeworkonEventServiceRole60E4BAC5"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module6/Monitoring/Alarms/Provider/framework-onEvent/ServiceRole/DefaultPolicy/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "MonitoringAlarmsProviderframeworkonEventServiceRoleDefaultPolicy4F779F1A"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module6/Monitoring/Alarms/Provider/framework-onEvent/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "MonitoringAlarmsProviderframeworkonEventFD445F48"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module6/Monitoring/Alarms/Resource/Default": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "MonitoringAlarms66989066"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module6/Monitoring/Alarms/SnsTopicArnParam/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "MonitoringAlarmsSnsTopicArnParam9143367D"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module6/CDKMetadata/Default": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "CDKMetadata"
+          }
+        ],
+        "/NetAIOpsInfraStack/Module6.NestedStack/Module6.NestedStackResource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "Module6NestedStackModule6NestedStackResource643CADB2"
+          }
+        ],
+        "/NetAIOpsInfraStack/CDKMetadata/Default": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "CDKMetadata"
+          }
+        ],
+        "/NetAIOpsInfraStack/BootstrapVersion": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "BootstrapVersion"
+          }
+        ],
+        "/NetAIOpsInfraStack/CheckBootstrapVersion": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "CheckBootstrapVersion"
+          }
+        ]
+      },
+      "displayName": "NetAIOpsInfraStack"
+    },
+    "Tree": {
+      "type": "cdk:tree",
+      "properties": {
+        "file": "tree.json"
+      }
+    },
+    "aws-cdk-lib/feature-flag-report": {
+      "type": "cdk:feature-flag-report",
+      "properties": {
+        "module": "aws-cdk-lib",
+        "flags": {
+          "@aws-cdk/aws-signer:signingProfileNamePassedToCfn": {
+            "recommendedValue": true,
+            "explanation": "Pass signingProfileName to CfnSigningProfile"
+          },
+          "@aws-cdk/core:newStyleStackSynthesis": {
+            "recommendedValue": true,
+            "explanation": "Switch to new stack synthesis method which enables CI/CD",
+            "unconfiguredBehavesLike": {
+              "v2": true
+            }
+          },
+          "@aws-cdk/core:stackRelativeExports": {
+            "recommendedValue": true,
+            "explanation": "Name exports based on the construct paths relative to the stack, rather than the global construct path",
+            "unconfiguredBehavesLike": {
+              "v2": true
+            }
+          },
+          "@aws-cdk/aws-ecs-patterns:secGroupsDisablesImplicitOpenListener": {
+            "recommendedValue": true,
+            "explanation": "Disable implicit openListener when custom security groups are provided"
+          },
+          "@aws-cdk/aws-rds:lowercaseDbIdentifier": {
+            "recommendedValue": true,
+            "explanation": "Force lowercasing of RDS Cluster names in CDK",
+            "unconfiguredBehavesLike": {
+              "v2": true
+            }
+          },
+          "@aws-cdk/aws-apigateway:usagePlanKeyOrderInsensitiveId": {
+            "recommendedValue": true,
+            "explanation": "Allow adding/removing multiple UsagePlanKeys independently",
+            "unconfiguredBehavesLike": {
+              "v2": true
+            }
+          },
+          "@aws-cdk/aws-lambda:recognizeVersionProps": {
+            "recommendedValue": true,
+            "explanation": "Enable this feature flag to opt in to the updated logical id calculation for Lambda Version created using the  `fn.currentVersion`.",
+            "unconfiguredBehavesLike": {
+              "v2": true
+            }
+          },
+          "@aws-cdk/aws-lambda:recognizeLayerVersion": {
+            "userValue": true,
+            "recommendedValue": true,
+            "explanation": "Enable this feature flag to opt in to the updated logical id calculation for Lambda Version created using the `fn.currentVersion`."
+          },
+          "@aws-cdk/aws-cloudfront:defaultSecurityPolicyTLSv1.2_2021": {
+            "recommendedValue": true,
+            "explanation": "Enable this feature flag to have cloudfront distributions use the security policy TLSv1.2_2021 by default.",
+            "unconfiguredBehavesLike": {
+              "v2": true
+            }
+          },
+          "@aws-cdk/core:checkSecretUsage": {
+            "userValue": true,
+            "recommendedValue": true,
+            "explanation": "Enable this flag to make it impossible to accidentally use SecretValues in unsafe locations"
+          },
+          "@aws-cdk/core:target-partitions": {
+            "userValue": [
+              "aws"
+            ],
+            "recommendedValue": [
+              "aws",
+              "aws-cn"
+            ],
+            "explanation": "What regions to include in lookup tables of environment agnostic stacks"
+          },
+          "@aws-cdk-containers/ecs-service-extensions:enableDefaultLogDriver": {
+            "recommendedValue": true,
+            "explanation": "ECS extensions will automatically add an `awslogs` driver if no logging is specified"
+          },
+          "@aws-cdk/aws-ec2:uniqueImdsv2TemplateName": {
+            "recommendedValue": true,
+            "explanation": "Enable this feature flag to have Launch Templates generated by the `InstanceRequireImdsv2Aspect` use unique names."
+          },
+          "@aws-cdk/aws-ecs:arnFormatIncludesClusterName": {
+            "recommendedValue": true,
+            "explanation": "ARN format used by ECS. In the new ARN format, the cluster name is part of the resource ID."
+          },
+          "@aws-cdk/aws-iam:minimizePolicies": {
+            "userValue": true,
+            "recommendedValue": true,
+            "explanation": "Minimize IAM policies by combining Statements"
+          },
+          "@aws-cdk/core:validateSnapshotRemovalPolicy": {
+            "recommendedValue": true,
+            "explanation": "Error on snapshot removal policies on resources that do not support it."
+          },
+          "@aws-cdk/aws-codepipeline:crossAccountKeyAliasStackSafeResourceName": {
+            "recommendedValue": true,
+            "explanation": "Generate key aliases that include the stack name"
+          },
+          "@aws-cdk/aws-s3:createDefaultLoggingPolicy": {
+            "recommendedValue": true,
+            "explanation": "Enable this feature flag to create an S3 bucket policy by default in cases where an AWS service would automatically create the Policy if one does not exist."
+          },
+          "@aws-cdk/aws-sns-subscriptions:restrictSqsDescryption": {
+            "recommendedValue": true,
+            "explanation": "Restrict KMS key policy for encrypted Queues a bit more"
+          },
+          "@aws-cdk/aws-apigateway:disableCloudWatchRole": {
+            "recommendedValue": true,
+            "explanation": "Make default CloudWatch Role behavior safe for multiple API Gateways in one environment"
+          },
+          "@aws-cdk/core:enablePartitionLiterals": {
+            "recommendedValue": true,
+            "explanation": "Make ARNs concrete if AWS partition is known"
+          },
+          "@aws-cdk/aws-events:eventsTargetQueueSameAccount": {
+            "recommendedValue": true,
+            "explanation": "Event Rules may only push to encrypted SQS queues in the same account"
+          },
+          "@aws-cdk/aws-ecs:disableExplicitDeploymentControllerForCircuitBreaker": {
+            "recommendedValue": true,
+            "explanation": "Avoid setting the \"ECS\" deployment controller when adding a circuit breaker"
+          },
+          "@aws-cdk/aws-iam:importedRoleStackSafeDefaultPolicyName": {
+            "recommendedValue": true,
+            "explanation": "Enable this feature to create default policy names for imported roles that depend on the stack the role is in."
+          },
+          "@aws-cdk/aws-s3:serverAccessLogsUseBucketPolicy": {
+            "recommendedValue": true,
+            "explanation": "Use S3 Bucket Policy instead of ACLs for Server Access Logging"
+          },
+          "@aws-cdk/aws-route53-patters:useCertificate": {
+            "recommendedValue": true,
+            "explanation": "Use the official `Certificate` resource instead of `DnsValidatedCertificate`"
+          },
+          "@aws-cdk/customresources:installLatestAwsSdkDefault": {
+            "recommendedValue": false,
+            "explanation": "Whether to install the latest SDK by default in AwsCustomResource"
+          },
+          "@aws-cdk/aws-rds:databaseProxyUniqueResourceName": {
+            "recommendedValue": true,
+            "explanation": "Use unique resource name for Database Proxy"
+          },
+          "@aws-cdk/aws-codedeploy:removeAlarmsFromDeploymentGroup": {
+            "recommendedValue": true,
+            "explanation": "Remove CloudWatch alarms from deployment group"
+          },
+          "@aws-cdk/aws-apigateway:authorizerChangeDeploymentLogicalId": {
+            "recommendedValue": true,
+            "explanation": "Include authorizer configuration in the calculation of the API deployment logical ID."
+          },
+          "@aws-cdk/aws-ec2:launchTemplateDefaultUserData": {
+            "recommendedValue": true,
+            "explanation": "Define user data for a launch template by default when a machine image is provided."
+          },
+          "@aws-cdk/aws-secretsmanager:useAttachedSecretResourcePolicyForSecretTargetAttachments": {
+            "recommendedValue": true,
+            "explanation": "SecretTargetAttachments uses the ResourcePolicy of the attached Secret."
+          },
+          "@aws-cdk/aws-redshift:columnId": {
+            "recommendedValue": true,
+            "explanation": "Whether to use an ID to track Redshift column changes"
+          },
+          "@aws-cdk/aws-stepfunctions-tasks:enableEmrServicePolicyV2": {
+            "recommendedValue": true,
+            "explanation": "Enable AmazonEMRServicePolicy_v2 managed policies"
+          },
+          "@aws-cdk/aws-ec2:restrictDefaultSecurityGroup": {
+            "recommendedValue": true,
+            "explanation": "Restrict access to the VPC default security group"
+          },
+          "@aws-cdk/aws-apigateway:requestValidatorUniqueId": {
+            "recommendedValue": true,
+            "explanation": "Generate a unique id for each RequestValidator added to a method"
+          },
+          "@aws-cdk/aws-kms:aliasNameRef": {
+            "recommendedValue": true,
+            "explanation": "KMS Alias name and keyArn will have implicit reference to KMS Key"
+          },
+          "@aws-cdk/aws-kms:applyImportedAliasPermissionsToPrincipal": {
+            "recommendedValue": true,
+            "explanation": "Enable grant methods on Aliases imported by name to use kms:ResourceAliases condition"
+          },
+          "@aws-cdk/aws-autoscaling:generateLaunchTemplateInsteadOfLaunchConfig": {
+            "recommendedValue": true,
+            "explanation": "Generate a launch template when creating an AutoScalingGroup"
+          },
+          "@aws-cdk/core:includePrefixInUniqueNameGeneration": {
+            "recommendedValue": true,
+            "explanation": "Include the stack prefix in the stack name generation process"
+          },
+          "@aws-cdk/aws-efs:denyAnonymousAccess": {
+            "recommendedValue": true,
+            "explanation": "EFS denies anonymous clients accesses"
+          },
+          "@aws-cdk/aws-opensearchservice:enableOpensearchMultiAzWithStandby": {
+            "recommendedValue": true,
+            "explanation": "Enables support for Multi-AZ with Standby deployment for opensearch domains"
+          },
+          "@aws-cdk/aws-lambda-nodejs:useLatestRuntimeVersion": {
+            "recommendedValue": true,
+            "explanation": "Enables aws-lambda-nodejs.Function to use the latest available NodeJs runtime as the default"
+          },
+          "@aws-cdk/aws-efs:mountTargetOrderInsensitiveLogicalId": {
+            "recommendedValue": true,
+            "explanation": "When enabled, mount targets will have a stable logicalId that is linked to the associated subnet."
+          },
+          "@aws-cdk/aws-rds:auroraClusterChangeScopeOfInstanceParameterGroupWithEachParameters": {
+            "recommendedValue": true,
+            "explanation": "When enabled, a scope of InstanceParameterGroup for AuroraClusterInstance with each parameters will change."
+          },
+          "@aws-cdk/aws-appsync:useArnForSourceApiAssociationIdentifier": {
+            "recommendedValue": true,
+            "explanation": "When enabled, will always use the arn for identifiers for CfnSourceApiAssociation in the GraphqlApi construct rather than id."
+          },
+          "@aws-cdk/aws-rds:preventRenderingDeprecatedCredentials": {
+            "recommendedValue": true,
+            "explanation": "When enabled, creating an RDS database cluster from a snapshot will only render credentials for snapshot credentials."
+          },
+          "@aws-cdk/aws-codepipeline-actions:useNewDefaultBranchForCodeCommitSource": {
+            "recommendedValue": true,
+            "explanation": "When enabled, the CodeCommit source action is using the default branch name 'main'."
+          },
+          "@aws-cdk/aws-cloudwatch-actions:changeLambdaPermissionLogicalIdForLambdaAction": {
+            "recommendedValue": true,
+            "explanation": "When enabled, the logical ID of a Lambda permission for a Lambda action includes an alarm ID."
+          },
+          "@aws-cdk/aws-codepipeline:crossAccountKeysDefaultValueToFalse": {
+            "recommendedValue": true,
+            "explanation": "Enables Pipeline to set the default value for crossAccountKeys to false."
+          },
+          "@aws-cdk/aws-codepipeline:defaultPipelineTypeToV2": {
+            "recommendedValue": true,
+            "explanation": "Enables Pipeline to set the default pipeline type to V2."
+          },
+          "@aws-cdk/aws-kms:reduceCrossAccountRegionPolicyScope": {
+            "recommendedValue": true,
+            "explanation": "When enabled, IAM Policy created from KMS key grant will reduce the resource scope to this key only."
+          },
+          "@aws-cdk/pipelines:reduceAssetRoleTrustScope": {
+            "recommendedValue": true,
+            "explanation": "Remove the root account principal from PipelineAssetsFileRole trust policy",
+            "unconfiguredBehavesLike": {
+              "v2": true
+            }
+          },
+          "@aws-cdk/aws-eks:nodegroupNameAttribute": {
+            "recommendedValue": true,
+            "explanation": "When enabled, nodegroupName attribute of the provisioned EKS NodeGroup will not have the cluster name prefix."
+          },
+          "@aws-cdk/aws-eks:useNativeOidcProvider": {
+            "recommendedValue": true,
+            "explanation": "When enabled, EKS V2 clusters will use the native OIDC provider resource AWS::IAM::OIDCProvider instead of creating the OIDCProvider with a custom resource (iam.OpenIDConnectProvider)."
+          },
+          "@aws-cdk/aws-ec2:ebsDefaultGp3Volume": {
+            "recommendedValue": true,
+            "explanation": "When enabled, the default volume type of the EBS volume will be GP3"
+          },
+          "@aws-cdk/aws-ecs:removeDefaultDeploymentAlarm": {
+            "recommendedValue": true,
+            "explanation": "When enabled, remove default deployment alarm settings"
+          },
+          "@aws-cdk/custom-resources:logApiResponseDataPropertyTrueDefault": {
+            "recommendedValue": false,
+            "explanation": "When enabled, the custom resource used for `AwsCustomResource` will configure the `logApiResponseData` property as true by default"
+          },
+          "@aws-cdk/aws-s3:keepNotificationInImportedBucket": {
+            "recommendedValue": false,
+            "explanation": "When enabled, Adding notifications to a bucket in the current stack will not remove notification from imported stack."
+          },
+          "@aws-cdk/aws-stepfunctions-tasks:useNewS3UriParametersForBedrockInvokeModelTask": {
+            "recommendedValue": true,
+            "explanation": "When enabled, use new props for S3 URI field in task definition of state machine for bedrock invoke model.",
+            "unconfiguredBehavesLike": {
+              "v2": true
+            }
+          },
+          "@aws-cdk/core:explicitStackTags": {
+            "recommendedValue": true,
+            "explanation": "When enabled, stack tags need to be assigned explicitly on a Stack."
+          },
+          "@aws-cdk/aws-ecs:reduceEc2FargateCloudWatchPermissions": {
+            "recommendedValue": true,
+            "explanation": "When enabled, we will only grant the necessary permissions when users specify cloudwatch log group through logConfiguration"
+          },
+          "@aws-cdk/aws-dynamodb:resourcePolicyPerReplica": {
+            "recommendedValue": true,
+            "explanation": "When enabled will allow you to specify a resource policy per replica, and not copy the source table policy to all replicas"
+          },
+          "@aws-cdk/aws-ec2:ec2SumTImeoutEnabled": {
+            "recommendedValue": true,
+            "explanation": "When enabled, initOptions.timeout and resourceSignalTimeout values will be summed together."
+          },
+          "@aws-cdk/aws-appsync:appSyncGraphQLAPIScopeLambdaPermission": {
+            "recommendedValue": true,
+            "explanation": "When enabled, a Lambda authorizer Permission created when using GraphqlApi will be properly scoped with a SourceArn."
+          },
+          "@aws-cdk/aws-rds:setCorrectValueForDatabaseInstanceReadReplicaInstanceResourceId": {
+            "recommendedValue": true,
+            "explanation": "When enabled, the value of property `instanceResourceId` in construct `DatabaseInstanceReadReplica` will be set to the correct value which is `DbiResourceId` instead of currently `DbInstanceArn`"
+          },
+          "@aws-cdk/core:cfnIncludeRejectComplexResourceUpdateCreatePolicyIntrinsics": {
+            "recommendedValue": true,
+            "explanation": "When enabled, CFN templates added with `cfn-include` will error if the template contains Resource Update or Create policies with CFN Intrinsics that include non-primitive values."
+          },
+          "@aws-cdk/aws-lambda-nodejs:sdkV3ExcludeSmithyPackages": {
+            "recommendedValue": true,
+            "explanation": "When enabled, both `@aws-sdk` and `@smithy` packages will be excluded from the Lambda Node.js 18.x runtime to prevent version mismatches in bundled applications."
+          },
+          "@aws-cdk/aws-stepfunctions-tasks:fixRunEcsTaskPolicy": {
+            "recommendedValue": true,
+            "explanation": "When enabled, the resource of IAM Run Ecs policy generated by SFN EcsRunTask will reference the definition, instead of constructing ARN."
+          },
+          "@aws-cdk/aws-ec2:bastionHostUseAmazonLinux2023ByDefault": {
+            "recommendedValue": true,
+            "explanation": "When enabled, the BastionHost construct will use the latest Amazon Linux 2023 AMI, instead of Amazon Linux 2."
+          },
+          "@aws-cdk/core:aspectStabilization": {
+            "recommendedValue": true,
+            "explanation": "When enabled, a stabilization loop will be run when invoking Aspects during synthesis.",
+            "unconfiguredBehavesLike": {
+              "v2": true
+            }
+          },
+          "@aws-cdk/aws-route53-targets:userPoolDomainNameMethodWithoutCustomResource": {
+            "recommendedValue": true,
+            "explanation": "When enabled, use a new method for DNS Name of user pool domain target without creating a custom resource."
+          },
+          "@aws-cdk/aws-elasticloadbalancingV2:albDualstackWithoutPublicIpv4SecurityGroupRulesDefault": {
+            "recommendedValue": true,
+            "explanation": "When enabled, the default security group ingress rules will allow IPv6 ingress from anywhere"
+          },
+          "@aws-cdk/aws-iam:oidcRejectUnauthorizedConnections": {
+            "recommendedValue": true,
+            "explanation": "When enabled, the default behaviour of OIDC provider will reject unauthorized connections"
+          },
+          "@aws-cdk/core:enableAdditionalMetadataCollection": {
+            "recommendedValue": true,
+            "explanation": "When enabled, CDK will expand the scope of usage data collected to better inform CDK development and improve communication for security concerns and emerging issues."
+          },
+          "@aws-cdk/aws-lambda:createNewPoliciesWithAddToRolePolicy": {
+            "recommendedValue": false,
+            "explanation": "[Deprecated] When enabled, Lambda will create new inline policies with AddToRolePolicy instead of adding to the Default Policy Statement"
+          },
+          "@aws-cdk/aws-s3:setUniqueReplicationRoleName": {
+            "recommendedValue": true,
+            "explanation": "When enabled, CDK will automatically generate a unique role name that is used for s3 object replication."
+          },
+          "@aws-cdk/pipelines:reduceStageRoleTrustScope": {
+            "recommendedValue": true,
+            "explanation": "Remove the root account principal from Stage addActions trust policy",
+            "unconfiguredBehavesLike": {
+              "v2": true
+            }
+          },
+          "@aws-cdk/aws-events:requireEventBusPolicySid": {
+            "recommendedValue": true,
+            "explanation": "When enabled, grantPutEventsTo() will use resource policies with Statement IDs for service principals."
+          },
+          "@aws-cdk/core:aspectPrioritiesMutating": {
+            "recommendedValue": true,
+            "explanation": "When set to true, Aspects added by the construct library on your behalf will be given a priority of MUTATING."
+          },
+          "@aws-cdk/aws-dynamodb:retainTableReplica": {
+            "recommendedValue": true,
+            "explanation": "When enabled, table replica will be default to the removal policy of source table unless specified otherwise."
+          },
+          "@aws-cdk/cognito:logUserPoolClientSecretValue": {
+            "recommendedValue": false,
+            "explanation": "When disabled, the value of the user pool client secret will not be logged in the custom resource lambda function logs."
+          },
+          "@aws-cdk/pipelines:reduceCrossAccountActionRoleTrustScope": {
+            "recommendedValue": true,
+            "explanation": "When enabled, scopes down the trust policy for the cross-account action role",
+            "unconfiguredBehavesLike": {
+              "v2": true
+            }
+          },
+          "@aws-cdk/aws-stepfunctions:useDistributedMapResultWriterV2": {
+            "recommendedValue": true,
+            "explanation": "When enabled, the resultWriterV2 property of DistributedMap will be used insted of resultWriter"
+          },
+          "@aws-cdk/s3-notifications:addS3TrustKeyPolicyForSnsSubscriptions": {
+            "recommendedValue": true,
+            "explanation": "Add an S3 trust policy to a KMS key resource policy for SNS subscriptions."
+          },
+          "@aws-cdk/aws-ec2:requirePrivateSubnetsForEgressOnlyInternetGateway": {
+            "recommendedValue": true,
+            "explanation": "When enabled, the EgressOnlyGateway resource is only created if private subnets are defined in the dual-stack VPC."
+          },
+          "@aws-cdk/aws-ec2-alpha:useResourceIdForVpcV2Migration": {
+            "recommendedValue": false,
+            "explanation": "When enabled, use resource IDs for VPC V2 migration"
+          },
+          "@aws-cdk/aws-s3:publicAccessBlockedByDefault": {
+            "recommendedValue": true,
+            "explanation": "When enabled, setting any combination of options for BlockPublicAccess will automatically set true for any options not defined."
+          },
+          "@aws-cdk/aws-lambda:useCdkManagedLogGroup": {
+            "recommendedValue": true,
+            "explanation": "When enabled, CDK creates and manages loggroup for the lambda function"
+          },
+          "@aws-cdk/aws-elasticloadbalancingv2:networkLoadBalancerWithSecurityGroupByDefault": {
+            "recommendedValue": true,
+            "explanation": "When enabled, Network Load Balancer will be created with a security group by default."
+          },
+          "@aws-cdk/aws-stepfunctions-tasks:httpInvokeDynamicJsonPathEndpoint": {
+            "recommendedValue": true,
+            "explanation": "When enabled, allows using a dynamic apiEndpoint with JSONPath format in HttpInvoke tasks.",
+            "unconfiguredBehavesLike": {
+              "v2": true
+            }
+          },
+          "@aws-cdk/aws-ecs-patterns:uniqueTargetGroupId": {
+            "recommendedValue": true,
+            "explanation": "When enabled, ECS patterns will generate unique target group IDs to prevent conflicts during load balancer replacement"
+          },
+          "@aws-cdk/aws-route53-patterns:useDistribution": {
+            "recommendedValue": true,
+            "explanation": "Use the `Distribution` resource instead of `CloudFrontWebDistribution`"
+          }
+        }
+      }
+    }
+  },
+  "minimumCliVersion": "2.1033.0"
+}

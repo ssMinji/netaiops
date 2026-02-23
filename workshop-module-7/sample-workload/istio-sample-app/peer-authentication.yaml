@@ -1,0 +1,12 @@
+# =============================================================================
+# PeerAuthentication - STRICT mTLS for istio-sample namespace
+# PeerAuthentication - istio-sample 네임스페이스 STRICT mTLS 적용
+# =============================================================================
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: default
+  namespace: istio-sample
+spec:
+  mtls:
+    mode: STRICT

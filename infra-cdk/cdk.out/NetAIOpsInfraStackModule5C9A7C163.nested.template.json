@@ -1,0 +1,1331 @@
+{
+ "Description": "Module 5 - K8s Diagnostics Agent (Cognito, Gateway, Runtime)",
+ "Resources": {
+  "CognitoAgentAuthUserPool79DB0993": {
+   "Type": "AWS::Cognito::UserPool",
+   "Properties": {
+    "AccountRecoverySetting": {
+     "RecoveryMechanisms": [
+      {
+       "Name": "verified_phone_number",
+       "Priority": 1
+      },
+      {
+       "Name": "verified_email",
+       "Priority": 2
+      }
+     ]
+    },
+    "AdminCreateUserConfig": {
+     "AllowAdminCreateUserOnly": true
+    },
+    "AutoVerifiedAttributes": [
+     "email"
+    ],
+    "EmailVerificationMessage": "The verification code to your new account is {####}",
+    "EmailVerificationSubject": "Verify your new account",
+    "MfaConfiguration": "OFF",
+    "Policies": {
+     "PasswordPolicy": {
+      "MinimumLength": 8,
+      "RequireLowercase": true,
+      "RequireNumbers": true,
+      "RequireSymbols": false,
+      "RequireUppercase": true
+     }
+    },
+    "SmsVerificationMessage": "The verification code to your new account is {####}",
+    "UserPoolName": "K8sAgentPool",
+    "UsernameAttributes": [
+     "email"
+    ],
+    "UsernameConfiguration": {
+     "CaseSensitive": false
+    },
+    "VerificationMessageTemplate": {
+     "DefaultEmailOption": "CONFIRM_WITH_CODE",
+     "EmailMessage": "The verification code to your new account is {####}",
+     "EmailSubject": "Verify your new account",
+     "SmsMessage": "The verification code to your new account is {####}"
+    }
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module5/Cognito/AgentAuth/UserPool/Resource"
+   }
+  },
+  "CognitoAgentAuthUserPoolResourceServerB4EBAB0D": {
+   "Type": "AWS::Cognito::UserPoolResourceServer",
+   "Properties": {
+    "Identifier": "netops-a2a-server",
+    "Name": "netops-a2a-server",
+    "Scopes": [
+     {
+      "ScopeDescription": "Read access",
+      "ScopeName": "gateway:read"
+     },
+     {
+      "ScopeDescription": "Write access",
+      "ScopeName": "gateway:write"
+     },
+     {
+      "ScopeDescription": "Invoke K8s agent runtime",
+      "ScopeName": "invoke"
+     }
+    ],
+    "UserPoolId": {
+     "Ref": "CognitoAgentAuthUserPool79DB0993"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module5/Cognito/AgentAuth/UserPool/ResourceServer/Resource"
+   }
+  },
+  "CognitoAgentAuthUserPoolMachineClient981BAE25": {
+   "Type": "AWS::Cognito::UserPoolClient",
+   "Properties": {
+    "AccessTokenValidity": 60,
+    "AllowedOAuthFlows": [
+     "client_credentials"
+    ],
+    "AllowedOAuthFlowsUserPoolClient": true,
+    "AllowedOAuthScopes": [
+     {
+      "Fn::Join": [
+       "",
+       [
+        {
+         "Ref": "CognitoAgentAuthUserPoolResourceServerB4EBAB0D"
+        },
+        "/gateway:read"
+       ]
+      ]
+     },
+     {
+      "Fn::Join": [
+       "",
+       [
+        {
+         "Ref": "CognitoAgentAuthUserPoolResourceServerB4EBAB0D"
+        },
+        "/gateway:write"
+       ]
+      ]
+     },
+     {
+      "Fn::Join": [
+       "",
+       [
+        {
+         "Ref": "CognitoAgentAuthUserPoolResourceServerB4EBAB0D"
+        },
+        "/invoke"
+       ]
+      ]
+     }
+    ],
+    "ClientName": "K8sMachineClient",
+    "GenerateSecret": true,
+    "IdTokenValidity": 60,
+    "RefreshTokenValidity": 1440,
+    "SupportedIdentityProviders": [
+     "COGNITO"
+    ],
+    "TokenValidityUnits": {
+     "AccessToken": "minutes",
+     "IdToken": "minutes",
+     "RefreshToken": "minutes"
+    },
+    "UserPoolId": {
+     "Ref": "CognitoAgentAuthUserPool79DB0993"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module5/Cognito/AgentAuth/UserPool/MachineClient/Resource"
+   }
+  },
+  "CognitoAgentAuthUserPoolWebClient6DB119B9": {
+   "Type": "AWS::Cognito::UserPoolClient",
+   "Properties": {
+    "AccessTokenValidity": 60,
+    "AllowedOAuthFlows": [
+     "code"
+    ],
+    "AllowedOAuthFlowsUserPoolClient": true,
+    "AllowedOAuthScopes": [
+     "openid",
+     "email",
+     "profile",
+     {
+      "Fn::Join": [
+       "",
+       [
+        {
+         "Ref": "CognitoAgentAuthUserPoolResourceServerB4EBAB0D"
+        },
+        "/gateway:read"
+       ]
+      ]
+     },
+     {
+      "Fn::Join": [
+       "",
+       [
+        {
+         "Ref": "CognitoAgentAuthUserPoolResourceServerB4EBAB0D"
+        },
+        "/gateway:write"
+       ]
+      ]
+     },
+     {
+      "Fn::Join": [
+       "",
+       [
+        {
+         "Ref": "CognitoAgentAuthUserPoolResourceServerB4EBAB0D"
+        },
+        "/invoke"
+       ]
+      ]
+     }
+    ],
+    "CallbackURLs": [
+     "http://localhost:8501/",
+     "https://example.com/auth/callback"
+    ],
+    "ClientName": "K8sWebClient",
+    "GenerateSecret": false,
+    "IdTokenValidity": 60,
+    "LogoutURLs": [
+     "http://localhost:8501/"
+    ],
+    "RefreshTokenValidity": 43200,
+    "SupportedIdentityProviders": [
+     "COGNITO"
+    ],
+    "TokenValidityUnits": {
+     "AccessToken": "minutes",
+     "IdToken": "minutes",
+     "RefreshToken": "minutes"
+    },
+    "UserPoolId": {
+     "Ref": "CognitoAgentAuthUserPool79DB0993"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module5/Cognito/AgentAuth/UserPool/WebClient/Resource"
+   }
+  },
+  "CognitoAgentAuthUserPoolDomainE10CDEF9": {
+   "Type": "AWS::Cognito::UserPoolDomain",
+   "Properties": {
+    "Domain": {
+     "Fn::Join": [
+      "",
+      [
+       "k8sagent-",
+       {
+        "Ref": "AWS::AccountId"
+       }
+      ]
+     ]
+    },
+    "UserPoolId": {
+     "Ref": "CognitoAgentAuthUserPool79DB0993"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module5/Cognito/AgentAuth/UserPool/Domain/Resource"
+   }
+  },
+  "CognitoAgentAuthAdminGroup5AA8D9B6": {
+   "Type": "AWS::Cognito::UserPoolGroup",
+   "Properties": {
+    "GroupName": "admin",
+    "Precedence": 1,
+    "UserPoolId": {
+     "Ref": "CognitoAgentAuthUserPool79DB0993"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module5/Cognito/AgentAuth/AdminGroup"
+   }
+  },
+  "CognitoAgentAuthUserGroup5AA08307": {
+   "Type": "AWS::Cognito::UserPoolGroup",
+   "Properties": {
+    "GroupName": "user",
+    "Precedence": 2,
+    "UserPoolId": {
+     "Ref": "CognitoAgentAuthUserPool79DB0993"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module5/Cognito/AgentAuth/UserGroup"
+   }
+  },
+  "CognitoAgentAuthParamuserpoolid099CAB4E": {
+   "Type": "AWS::SSM::Parameter",
+   "Properties": {
+    "Name": "/a2a/app/k8s/agentcore/userpool_id",
+    "Type": "String",
+    "Value": {
+     "Ref": "CognitoAgentAuthUserPool79DB0993"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module5/Cognito/AgentAuth/Param-userpool_id/Resource"
+   }
+  },
+  "CognitoAgentAuthParammachineclientidDE903921": {
+   "Type": "AWS::SSM::Parameter",
+   "Properties": {
+    "Name": "/a2a/app/k8s/agentcore/machine_client_id",
+    "Type": "String",
+    "Value": {
+     "Ref": "CognitoAgentAuthUserPoolMachineClient981BAE25"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module5/Cognito/AgentAuth/Param-machine_client_id/Resource"
+   }
+  },
+  "CognitoAgentAuthParamcognitodiscoveryurlB02669F4": {
+   "Type": "AWS::SSM::Parameter",
+   "Properties": {
+    "Name": "/a2a/app/k8s/agentcore/cognito_discovery_url",
+    "Type": "String",
+    "Value": {
+     "Fn::Join": [
+      "",
+      [
+       "https://cognito-idp.",
+       {
+        "Ref": "AWS::Region"
+       },
+       ".amazonaws.com/",
+       {
+        "Ref": "CognitoAgentAuthUserPool79DB0993"
+       },
+       "/.well-known/openid-configuration"
+      ]
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module5/Cognito/AgentAuth/Param-cognito_discovery_url/Resource"
+   }
+  },
+  "CognitoAgentAuthParamcognitotokenurl6147470E": {
+   "Type": "AWS::SSM::Parameter",
+   "Properties": {
+    "Name": "/a2a/app/k8s/agentcore/cognito_token_url",
+    "Type": "String",
+    "Value": {
+     "Fn::Join": [
+      "",
+      [
+       "https://k8sagent-",
+       {
+        "Ref": "AWS::AccountId"
+       },
+       ".auth.",
+       {
+        "Ref": "AWS::Region"
+       },
+       ".amazoncognito.com/oauth2/token"
+      ]
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module5/Cognito/AgentAuth/Param-cognito_token_url/Resource"
+   }
+  },
+  "CognitoAgentAuthParamcognitoauthurl22CDBE6B": {
+   "Type": "AWS::SSM::Parameter",
+   "Properties": {
+    "Name": "/a2a/app/k8s/agentcore/cognito_auth_url",
+    "Type": "String",
+    "Value": {
+     "Fn::Join": [
+      "",
+      [
+       "https://k8sagent-",
+       {
+        "Ref": "AWS::AccountId"
+       },
+       ".auth.",
+       {
+        "Ref": "AWS::Region"
+       },
+       ".amazoncognito.com/oauth2/authorize"
+      ]
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module5/Cognito/AgentAuth/Param-cognito_auth_url/Resource"
+   }
+  },
+  "CognitoAgentAuthParamcognitodomainFF566F30": {
+   "Type": "AWS::SSM::Parameter",
+   "Properties": {
+    "Name": "/a2a/app/k8s/agentcore/cognito_domain",
+    "Type": "String",
+    "Value": {
+     "Fn::Join": [
+      "",
+      [
+       "https://k8sagent-",
+       {
+        "Ref": "AWS::AccountId"
+       },
+       ".auth.",
+       {
+        "Ref": "AWS::Region"
+       },
+       ".amazoncognito.com"
+      ]
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module5/Cognito/AgentAuth/Param-cognito_domain/Resource"
+   }
+  },
+  "CognitoAgentAuthParamcognitoauthscope509A23B6": {
+   "Type": "AWS::SSM::Parameter",
+   "Properties": {
+    "Name": "/a2a/app/k8s/agentcore/cognito_auth_scope",
+    "Type": "String",
+    "Value": "netops-a2a-server/gateway:read netops-a2a-server/gateway:write netops-a2a-server/invoke"
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module5/Cognito/AgentAuth/Param-cognito_auth_scope/Resource"
+   }
+  },
+  "CognitoAgentAuthParamwebclientidED0477CB": {
+   "Type": "AWS::SSM::Parameter",
+   "Properties": {
+    "Name": "/a2a/app/k8s/agentcore/web_client_id",
+    "Type": "String",
+    "Value": {
+     "Ref": "CognitoAgentAuthUserPoolWebClient6DB119B9"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module5/Cognito/AgentAuth/Param-web_client_id/Resource"
+   }
+  },
+  "CognitoAgentAuthParamcognitoproviderD40E4DB4": {
+   "Type": "AWS::SSM::Parameter",
+   "Properties": {
+    "Name": "/a2a/app/k8s/agentcore/cognito_provider",
+    "Type": "String",
+    "Value": {
+     "Fn::Join": [
+      "",
+      [
+       "k8sagent-",
+       {
+        "Ref": "AWS::AccountId"
+       }
+      ]
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module5/Cognito/AgentAuth/Param-cognito_provider/Resource"
+   }
+  },
+  "CognitoAgentAuthParammachineclientsecret2CFA4990": {
+   "Type": "AWS::SSM::Parameter",
+   "Properties": {
+    "Name": "/a2a/app/k8s/agentcore/machine_client_secret",
+    "Type": "String",
+    "Value": {
+     "Fn::GetAtt": [
+      "CognitoAgentAuthUserPoolMachineClient981BAE25",
+      "ClientSecret"
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module5/Cognito/AgentAuth/Param-machine_client_secret"
+   }
+  },
+  "CognitoRuntimeAuthUserPool211F04C3": {
+   "Type": "AWS::Cognito::UserPool",
+   "Properties": {
+    "AccountRecoverySetting": {
+     "RecoveryMechanisms": [
+      {
+       "Name": "verified_phone_number",
+       "Priority": 1
+      },
+      {
+       "Name": "verified_email",
+       "Priority": 2
+      }
+     ]
+    },
+    "AdminCreateUserConfig": {
+     "AllowAdminCreateUserOnly": true
+    },
+    "AutoVerifiedAttributes": [
+     "email"
+    ],
+    "EmailVerificationMessage": "The verification code to your new account is {####}",
+    "EmailVerificationSubject": "Verify your new account",
+    "MfaConfiguration": "OFF",
+    "Policies": {
+     "PasswordPolicy": {
+      "MinimumLength": 8,
+      "RequireLowercase": true,
+      "RequireNumbers": true,
+      "RequireSymbols": false,
+      "RequireUppercase": true
+     }
+    },
+    "SmsVerificationMessage": "The verification code to your new account is {####}",
+    "UserPoolName": "EksMcpServerPool",
+    "UsernameAttributes": [
+     "email"
+    ],
+    "UsernameConfiguration": {
+     "CaseSensitive": false
+    },
+    "VerificationMessageTemplate": {
+     "DefaultEmailOption": "CONFIRM_WITH_CODE",
+     "EmailMessage": "The verification code to your new account is {####}",
+     "EmailSubject": "Verify your new account",
+     "SmsMessage": "The verification code to your new account is {####}"
+    }
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module5/Cognito/RuntimeAuth/UserPool/Resource"
+   }
+  },
+  "CognitoRuntimeAuthUserPoolResourceServer0A03E06C": {
+   "Type": "AWS::Cognito::UserPoolResourceServer",
+   "Properties": {
+    "Identifier": "eks-mcp-server",
+    "Name": "eks-mcp-server",
+    "Scopes": [
+     {
+      "ScopeDescription": "Invoke EKS MCP Server",
+      "ScopeName": "invoke"
+     }
+    ],
+    "UserPoolId": {
+     "Ref": "CognitoRuntimeAuthUserPool211F04C3"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module5/Cognito/RuntimeAuth/UserPool/ResourceServer/Resource"
+   }
+  },
+  "CognitoRuntimeAuthUserPoolMachineClient1E3AD85F": {
+   "Type": "AWS::Cognito::UserPoolClient",
+   "Properties": {
+    "AccessTokenValidity": 60,
+    "AllowedOAuthFlows": [
+     "client_credentials"
+    ],
+    "AllowedOAuthFlowsUserPoolClient": true,
+    "AllowedOAuthScopes": [
+     {
+      "Fn::Join": [
+       "",
+       [
+        {
+         "Ref": "CognitoRuntimeAuthUserPoolResourceServer0A03E06C"
+        },
+        "/invoke"
+       ]
+      ]
+     }
+    ],
+    "ClientName": "EksMcpServerClient",
+    "GenerateSecret": true,
+    "IdTokenValidity": 60,
+    "RefreshTokenValidity": 1440,
+    "SupportedIdentityProviders": [
+     "COGNITO"
+    ],
+    "TokenValidityUnits": {
+     "AccessToken": "minutes",
+     "IdToken": "minutes",
+     "RefreshToken": "minutes"
+    },
+    "UserPoolId": {
+     "Ref": "CognitoRuntimeAuthUserPool211F04C3"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module5/Cognito/RuntimeAuth/UserPool/MachineClient/Resource"
+   }
+  },
+  "CognitoRuntimeAuthUserPoolDomain61EBF7D4": {
+   "Type": "AWS::Cognito::UserPoolDomain",
+   "Properties": {
+    "Domain": {
+     "Fn::Join": [
+      "",
+      [
+       "eks-mcp-",
+       {
+        "Ref": "AWS::AccountId"
+       }
+      ]
+     ]
+    },
+    "UserPoolId": {
+     "Ref": "CognitoRuntimeAuthUserPool211F04C3"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module5/Cognito/RuntimeAuth/UserPool/Domain/Resource"
+   }
+  },
+  "CognitoRuntimeAuthAdminGroup00F0F156": {
+   "Type": "AWS::Cognito::UserPoolGroup",
+   "Properties": {
+    "GroupName": "admin",
+    "Precedence": 1,
+    "UserPoolId": {
+     "Ref": "CognitoRuntimeAuthUserPool211F04C3"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module5/Cognito/RuntimeAuth/AdminGroup"
+   }
+  },
+  "CognitoRuntimeAuthUserGroup41626D63": {
+   "Type": "AWS::Cognito::UserPoolGroup",
+   "Properties": {
+    "GroupName": "user",
+    "Precedence": 2,
+    "UserPoolId": {
+     "Ref": "CognitoRuntimeAuthUserPool211F04C3"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module5/Cognito/RuntimeAuth/UserGroup"
+   }
+  },
+  "CognitoRuntimeAuthParameksmcpuserpoolid535F4047": {
+   "Type": "AWS::SSM::Parameter",
+   "Properties": {
+    "Name": "/a2a/app/k8s/agentcore/eks_mcp_userpool_id",
+    "Type": "String",
+    "Value": {
+     "Ref": "CognitoRuntimeAuthUserPool211F04C3"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module5/Cognito/RuntimeAuth/Param-eks_mcp_userpool_id/Resource"
+   }
+  },
+  "CognitoRuntimeAuthParameksmcpmachineclientid0973FF1B": {
+   "Type": "AWS::SSM::Parameter",
+   "Properties": {
+    "Name": "/a2a/app/k8s/agentcore/eks_mcp_machine_client_id",
+    "Type": "String",
+    "Value": {
+     "Ref": "CognitoRuntimeAuthUserPoolMachineClient1E3AD85F"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module5/Cognito/RuntimeAuth/Param-eks_mcp_machine_client_id/Resource"
+   }
+  },
+  "CognitoRuntimeAuthParameksmcpcognitodiscoveryurl954D1EEF": {
+   "Type": "AWS::SSM::Parameter",
+   "Properties": {
+    "Name": "/a2a/app/k8s/agentcore/eks_mcp_cognito_discovery_url",
+    "Type": "String",
+    "Value": {
+     "Fn::Join": [
+      "",
+      [
+       "https://cognito-idp.",
+       {
+        "Ref": "AWS::Region"
+       },
+       ".amazonaws.com/",
+       {
+        "Ref": "CognitoRuntimeAuthUserPool211F04C3"
+       },
+       "/.well-known/openid-configuration"
+      ]
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module5/Cognito/RuntimeAuth/Param-eks_mcp_cognito_discovery_url/Resource"
+   }
+  },
+  "CognitoRuntimeAuthParameksmcpcognitotokenurl358FFFEB": {
+   "Type": "AWS::SSM::Parameter",
+   "Properties": {
+    "Name": "/a2a/app/k8s/agentcore/eks_mcp_cognito_token_url",
+    "Type": "String",
+    "Value": {
+     "Fn::Join": [
+      "",
+      [
+       "https://eks-mcp-",
+       {
+        "Ref": "AWS::AccountId"
+       },
+       ".auth.",
+       {
+        "Ref": "AWS::Region"
+       },
+       ".amazoncognito.com/oauth2/token"
+      ]
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module5/Cognito/RuntimeAuth/Param-eks_mcp_cognito_token_url/Resource"
+   }
+  },
+  "CognitoRuntimeAuthParameksmcpcognitoauthurlF10E217B": {
+   "Type": "AWS::SSM::Parameter",
+   "Properties": {
+    "Name": "/a2a/app/k8s/agentcore/eks_mcp_cognito_auth_url",
+    "Type": "String",
+    "Value": {
+     "Fn::Join": [
+      "",
+      [
+       "https://eks-mcp-",
+       {
+        "Ref": "AWS::AccountId"
+       },
+       ".auth.",
+       {
+        "Ref": "AWS::Region"
+       },
+       ".amazoncognito.com/oauth2/authorize"
+      ]
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module5/Cognito/RuntimeAuth/Param-eks_mcp_cognito_auth_url/Resource"
+   }
+  },
+  "CognitoRuntimeAuthParameksmcpcognitodomainDEE3E733": {
+   "Type": "AWS::SSM::Parameter",
+   "Properties": {
+    "Name": "/a2a/app/k8s/agentcore/eks_mcp_cognito_domain",
+    "Type": "String",
+    "Value": {
+     "Fn::Join": [
+      "",
+      [
+       "https://eks-mcp-",
+       {
+        "Ref": "AWS::AccountId"
+       },
+       ".auth.",
+       {
+        "Ref": "AWS::Region"
+       },
+       ".amazoncognito.com"
+      ]
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module5/Cognito/RuntimeAuth/Param-eks_mcp_cognito_domain/Resource"
+   }
+  },
+  "CognitoRuntimeAuthParameksmcpcognitoauthscope77D8EEE5": {
+   "Type": "AWS::SSM::Parameter",
+   "Properties": {
+    "Name": "/a2a/app/k8s/agentcore/eks_mcp_cognito_auth_scope",
+    "Type": "String",
+    "Value": "eks-mcp-server/invoke"
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module5/Cognito/RuntimeAuth/Param-eks_mcp_cognito_auth_scope/Resource"
+   }
+  },
+  "CognitoRuntimeAuthParameksmcpcognitoprovider7DE1653E": {
+   "Type": "AWS::SSM::Parameter",
+   "Properties": {
+    "Name": "/a2a/app/k8s/agentcore/eks_mcp_cognito_provider",
+    "Type": "String",
+    "Value": {
+     "Fn::Join": [
+      "",
+      [
+       "eks-mcp-",
+       {
+        "Ref": "AWS::AccountId"
+       }
+      ]
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module5/Cognito/RuntimeAuth/Param-eks_mcp_cognito_provider/Resource"
+   }
+  },
+  "CognitoRuntimeAuthParameksmcpmachineclientsecret2042F5F5": {
+   "Type": "AWS::SSM::Parameter",
+   "Properties": {
+    "Name": "/a2a/app/k8s/agentcore/eks_mcp_machine_client_secret",
+    "Type": "String",
+    "Value": {
+     "Fn::GetAtt": [
+      "CognitoRuntimeAuthUserPoolMachineClient1E3AD85F",
+      "ClientSecret"
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module5/Cognito/RuntimeAuth/Param-eks_mcp_machine_client_secret"
+   }
+  },
+  "CognitoExecutionRoleF6227C07": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": [
+         "bedrock-agentcore.amazonaws.com",
+         "lambda.amazonaws.com"
+        ]
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "ManagedPolicyArns": [
+     {
+      "Fn::Join": [
+       "",
+       [
+        "arn:",
+        {
+         "Ref": "AWS::Partition"
+        },
+        ":iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+       ]
+      ]
+     }
+    ],
+    "RoleName": "netaiops-m5-gateway-execution-role"
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module5/Cognito/ExecutionRole/Resource"
+   }
+  },
+  "CognitoExecutionRoleDefaultPolicy507D9598": {
+   "Type": "AWS::IAM::Policy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": [
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:BatchGetImage",
+        "ecr:GetAuthorizationToken",
+        "ecr:GetDownloadUrlForLayer"
+       ],
+       "Effect": "Allow",
+       "Resource": "*",
+       "Sid": "ECR"
+      },
+      {
+       "Action": [
+        "bedrock-agentcore-control:*",
+        "bedrock-agentcore:*"
+       ],
+       "Effect": "Allow",
+       "Resource": "*",
+       "Sid": "BedrockAgentCore"
+      },
+      {
+       "Action": [
+        "bedrock:GetFoundationModel",
+        "bedrock:GetInferenceProfile",
+        "bedrock:InvokeModel",
+        "bedrock:InvokeModelWithResponseStream",
+        "bedrock:ListFoundationModels",
+        "bedrock:ListInferenceProfiles"
+       ],
+       "Effect": "Allow",
+       "Resource": [
+        "arn:aws:bedrock:*::foundation-model/*",
+        {
+         "Fn::Join": [
+          "",
+          [
+           "arn:aws:bedrock:*:",
+           {
+            "Ref": "AWS::AccountId"
+           },
+           ":inference-profile/*"
+          ]
+         ]
+        }
+       ],
+       "Sid": "BedrockModels"
+      },
+      {
+       "Action": [
+        "eks:AccessKubernetesApi",
+        "eks:DescribeAddon",
+        "eks:DescribeCluster",
+        "eks:DescribeFargateProfile",
+        "eks:DescribeInsight",
+        "eks:DescribeNodegroup",
+        "eks:DescribeUpdate",
+        "eks:ListAddons",
+        "eks:ListClusters",
+        "eks:ListFargateProfiles",
+        "eks:ListInsights",
+        "eks:ListNodegroups",
+        "eks:ListUpdates"
+       ],
+       "Effect": "Allow",
+       "Resource": "*",
+       "Sid": "EKSReadOnly"
+      },
+      {
+       "Action": [
+        "cloudwatch:DescribeAlarms",
+        "cloudwatch:GetMetricData",
+        "cloudwatch:GetMetricStatistics",
+        "cloudwatch:ListMetrics",
+        "logs:CreateLogGroup",
+        "logs:CreateLogStream",
+        "logs:DescribeLogGroups",
+        "logs:DescribeLogStreams",
+        "logs:FilterLogEvents",
+        "logs:GetLogEvents",
+        "logs:GetQueryResults",
+        "logs:PutLogEvents",
+        "logs:StartQuery",
+        "logs:StopQuery"
+       ],
+       "Effect": "Allow",
+       "Resource": "*",
+       "Sid": "CloudWatchLogsMetrics"
+      },
+      {
+       "Action": [
+        "ec2:DescribeAvailabilityZones",
+        "ec2:DescribeNetworkAcls",
+        "ec2:DescribeNetworkInterfaces",
+        "ec2:DescribeRouteTables",
+        "ec2:DescribeSecurityGroups",
+        "ec2:DescribeSubnets",
+        "ec2:DescribeVpcs"
+       ],
+       "Effect": "Allow",
+       "Resource": "*",
+       "Sid": "EC2VPC"
+      },
+      {
+       "Action": [
+        "iam:CreateServiceLinkedRole",
+        "iam:GetPolicy",
+        "iam:GetPolicyVersion",
+        "iam:GetRole",
+        "iam:GetRolePolicy",
+        "iam:ListAttachedRolePolicies",
+        "iam:ListRolePolicies",
+        "iam:PassRole"
+       ],
+       "Effect": "Allow",
+       "Resource": "*",
+       "Sid": "IAM"
+      },
+      {
+       "Action": [
+        "ssm:GetParameter",
+        "ssm:GetParameters",
+        "ssm:GetParametersByPath",
+        "ssm:PutParameter"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::Join": [
+         "",
+         [
+          "arn:aws:ssm:",
+          {
+           "Ref": "AWS::Region"
+          },
+          ":",
+          {
+           "Ref": "AWS::AccountId"
+          },
+          ":parameter/a2a/app/k8s/*"
+         ]
+        ]
+       },
+       "Sid": "SSM"
+      },
+      {
+       "Action": [
+        "cloudformation:DescribeStackResources",
+        "cloudformation:DescribeStacks",
+        "cloudformation:ListStacks"
+       ],
+       "Effect": "Allow",
+       "Resource": "*",
+       "Sid": "CloudFormation"
+      },
+      {
+       "Action": [
+        "kms:Decrypt",
+        "kms:DescribeKey",
+        "secretsmanager:DescribeSecret",
+        "secretsmanager:GetSecretValue"
+       ],
+       "Effect": "Allow",
+       "Resource": "*",
+       "Sid": "SecretsKMS"
+      },
+      {
+       "Action": [
+        "xray:GetSamplingRules",
+        "xray:GetSamplingTargets",
+        "xray:PutTelemetryRecords",
+        "xray:PutTraceSegments"
+       ],
+       "Effect": "Allow",
+       "Resource": "*",
+       "Sid": "XRay"
+      },
+      {
+       "Action": "bedrock-agentcore-memory:*",
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::Join": [
+         "",
+         [
+          "arn:aws:bedrock-agentcore:",
+          {
+           "Ref": "AWS::Region"
+          },
+          ":",
+          {
+           "Ref": "AWS::AccountId"
+          },
+          ":memory/*"
+         ]
+        ]
+       },
+       "Sid": "Memory"
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "PolicyName": "CognitoExecutionRoleDefaultPolicy507D9598",
+    "Roles": [
+     {
+      "Ref": "CognitoExecutionRoleF6227C07"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module5/Cognito/ExecutionRole/DefaultPolicy/Resource"
+   }
+  },
+  "CognitoExecutionRoleParamA3146552": {
+   "Type": "AWS::SSM::Parameter",
+   "Properties": {
+    "Name": "/a2a/app/k8s/agentcore/gateway_iam_role",
+    "Type": "String",
+    "Value": {
+     "Fn::GetAtt": [
+      "CognitoExecutionRoleF6227C07",
+      "Arn"
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module5/Cognito/ExecutionRoleParam/Resource"
+   }
+  },
+  "GatewayOAuth2Provider8F24691D": {
+   "Type": "AWS::BedrockAgentCore::OAuth2CredentialProvider",
+   "Properties": {
+    "Name": "eks-mcp-server-oauth",
+    "CredentialProviderVendor": "CustomOAuth",
+    "Oauth2ProviderConfigInput": {
+     "CustomOAuthProviderConfig": {
+      "TokenUrl": {
+       "Fn::Join": [
+        "",
+        [
+         "https://eks-mcp-",
+         {
+          "Ref": "AWS::AccountId"
+         },
+         ".auth.",
+         {
+          "Ref": "AWS::Region"
+         },
+         ".amazoncognito.com/oauth2/token"
+        ]
+       ]
+      },
+      "ClientId": {
+       "Ref": "CognitoRuntimeAuthUserPoolMachineClient1E3AD85F"
+      },
+      "ClientSecret": {
+       "Fn::GetAtt": [
+        "CognitoRuntimeAuthUserPoolMachineClient1E3AD85F",
+        "ClientSecret"
+       ]
+      }
+     }
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module5/Gateway/OAuth2Provider/Provider"
+   }
+  },
+  "GatewayD4406D74": {
+   "Type": "AWS::BedrockAgentCore::Gateway",
+   "Properties": {
+    "Name": "k8s-diagnostics-gateway",
+    "RoleArn": {
+     "Fn::GetAtt": [
+      "CognitoExecutionRoleF6227C07",
+      "Arn"
+     ]
+    },
+    "ProtocolType": "MCP",
+    "AuthorizerType": "CUSTOM_JWT",
+    "AuthorizerConfiguration": {
+     "CustomJWTAuthorizer": {
+      "AllowedClients": [
+       {
+        "Ref": "CognitoAgentAuthUserPoolMachineClient981BAE25"
+       }
+      ],
+      "DiscoveryUrl": {
+       "Fn::Join": [
+        "",
+        [
+         "https://cognito-idp.",
+         {
+          "Ref": "AWS::Region"
+         },
+         ".amazonaws.com/",
+         {
+          "Ref": "CognitoAgentAuthUserPool79DB0993"
+         },
+         "/.well-known/openid-configuration"
+        ]
+       ]
+      }
+     }
+    },
+    "Description": "AgentCore K8s Diagnostics Gateway"
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module5/Gateway/Gateway/Gateway"
+   }
+  },
+  "GatewayTargetEksMcpServer0E393CE2": {
+   "Type": "AWS::BedrockAgentCore::GatewayTarget",
+   "Properties": {
+    "GatewayIdentifier": {
+     "Fn::GetAtt": [
+      "GatewayD4406D74",
+      "GatewayId"
+     ]
+    },
+    "Name": "EksMcpServer",
+    "Description": "Official AWS Labs EKS MCP Server - cluster diagnostics, resource management, logs, metrics",
+    "TargetConfiguration": {
+     "Mcp": {
+      "McpServer": {
+       "Endpoint": {
+        "Fn::Join": [
+         "",
+         [
+          "https://bedrock-agentcore.",
+          {
+           "Ref": "AWS::Region"
+          },
+          ".amazonaws.com/runtimes/",
+          {
+           "Ref": "SsmParameterValuea2aappk8sagentcoreeksmcpserverarnC96584B6F00A464EAD1953AFF4B05118Parameter"
+          },
+          "/invocations?qualifier=DEFAULT"
+         ]
+        ]
+       }
+      }
+     }
+    },
+    "CredentialProviderConfigurations": [
+     {
+      "CredentialProviderType": "OAUTH",
+      "CredentialProvider": {
+       "OauthCredentialProvider": {
+        "ProviderArn": {
+         "Fn::GetAtt": [
+          "GatewayOAuth2Provider8F24691D",
+          "CredentialProviderArn"
+         ]
+        },
+        "Scopes": [
+         "eks-mcp-server/invoke"
+        ]
+       }
+      }
+     }
+    ]
+   },
+   "DependsOn": [
+    "GatewayD4406D74"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module5/Gateway/Gateway/Target-EksMcpServer"
+   }
+  },
+  "GatewayGatewayIdParam71AC8AA6": {
+   "Type": "AWS::SSM::Parameter",
+   "Properties": {
+    "Name": "/a2a/app/k8s/agentcore/gateway_id",
+    "Type": "String",
+    "Value": {
+     "Fn::GetAtt": [
+      "GatewayD4406D74",
+      "GatewayId"
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module5/Gateway/Gateway/GatewayIdParam/Resource"
+   }
+  },
+  "GatewayGatewayNameParam6AC27475": {
+   "Type": "AWS::SSM::Parameter",
+   "Properties": {
+    "Name": "/a2a/app/k8s/agentcore/gateway_name",
+    "Type": "String",
+    "Value": "k8s-diagnostics-gateway"
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module5/Gateway/Gateway/GatewayNameParam/Resource"
+   }
+  },
+  "GatewayGatewayArnParam55F4B992": {
+   "Type": "AWS::SSM::Parameter",
+   "Properties": {
+    "Name": "/a2a/app/k8s/agentcore/gateway_arn",
+    "Type": "String",
+    "Value": {
+     "Fn::GetAtt": [
+      "GatewayD4406D74",
+      "GatewayArn"
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module5/Gateway/Gateway/GatewayArnParam/Resource"
+   }
+  },
+  "GatewayGatewayUrlParam532CB67A": {
+   "Type": "AWS::SSM::Parameter",
+   "Properties": {
+    "Name": "/a2a/app/k8s/agentcore/gateway_url",
+    "Type": "String",
+    "Value": {
+     "Fn::GetAtt": [
+      "GatewayD4406D74",
+      "GatewayUrl"
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module5/Gateway/Gateway/GatewayUrlParam/Resource"
+   }
+  },
+  "Runtime33C31BF9": {
+   "Type": "AWS::BedrockAgentCore::Runtime",
+   "Properties": {
+    "RuntimeName": "a2a_k8s_agent_runtime",
+    "RoleArn": {
+     "Fn::GetAtt": [
+      "CognitoExecutionRoleF6227C07",
+      "Arn"
+     ]
+    },
+    "Description": "K8s Diagnostics Agent Runtime (Module 5)",
+    "NetworkConfiguration": {
+     "NetworkMode": "PUBLIC"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module5/Runtime/Runtime"
+   }
+  },
+  "RuntimeRuntimeArnParam7730D90D": {
+   "Type": "AWS::SSM::Parameter",
+   "Properties": {
+    "Name": "/a2a/app/k8s/agentcore/runtime_arn",
+    "Type": "String",
+    "Value": {
+     "Fn::GetAtt": [
+      "Runtime33C31BF9",
+      "RuntimeArn"
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module5/Runtime/RuntimeArnParam/Resource"
+   }
+  },
+  "RuntimeRuntimeNameParamF9AC84C8": {
+   "Type": "AWS::SSM::Parameter",
+   "Properties": {
+    "Name": "/a2a/app/k8s/agentcore/runtime_name",
+    "Type": "String",
+    "Value": "a2a_k8s_agent_runtime"
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module5/Runtime/RuntimeNameParam/Resource"
+   }
+  },
+  "CDKMetadata": {
+   "Type": "AWS::CDK::Metadata",
+   "Properties": {
+    "Analytics": "v2:deflate64:H4sIAAAAAAAA/2WOzY7CMAyEn4V7aqruhTtIe0NVqz2jkBpkSGIUpyAU5d1X2x9UlpNnvhlLU0H1tYFypR9SmO5aWDpC2qNE7NqozVXphxyS4bOnyJB+BEPNbNX25F96Fg0K98Fgi+GOYVn5l8x4awl9XBYnMtsdO01+Wfgk34H7W1YiDlIbA/lzrYN2GMcJL5MVaQepYYt/fLg1WzLPoTaonIdoWvv2rmaalecO4SLre1VCVUK5ughREXofySE04/0F8X60SVkBAAA="
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module5/CDKMetadata/Default"
+   }
+  }
+ },
+ "Parameters": {
+  "SsmParameterValuea2aappk8sagentcoreeksmcpserverarnC96584B6F00A464EAD1953AFF4B05118Parameter": {
+   "Type": "AWS::SSM::Parameter::Value<String>",
+   "Default": "/a2a/app/k8s/agentcore/eks_mcp_server_arn"
+  }
+ }
+}

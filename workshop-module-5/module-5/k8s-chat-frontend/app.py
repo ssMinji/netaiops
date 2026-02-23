@@ -25,6 +25,7 @@ import yaml
 # Configuration
 # ---------------------------------------------------------------------------
 AGENT_REGION = os.environ.get("AGENT_REGION", "us-east-1")
+CHAOS_LAMBDA_NAME = os.environ.get("CHAOS_LAMBDA_NAME", "incident-chaos-tools")
 
 # Agent definitions
 AGENTS = {
@@ -55,6 +56,24 @@ AGENTS = {
             "에러율 증가": "지난 1시간 동안 payment 서비스의 에러율이 5%를 초과했습니다. 로그와 메트릭을 분석해주세요.",
             "지연 시간 급증": "API 응답 지연이 P99 기준 2초를 넘었습니다. APM 트레이스와 컨테이너 상태를 확인해주세요.",
             "파드 재시작 반복": "EKS 클러스터에서 checkout-service 파드가 반복적으로 재시작됩니다. 진단해주세요.",
+        },
+    },
+    "istio": {
+        "name": "Istio Mesh Diagnostics Agent",
+        "icon": "🕸",
+        "description": "Istio 서비스 메시 진단 에이전트 — RED 메트릭, mTLS, 트래픽 라우팅, 컨트롤 플레인 분석.",
+        "ssm_prefix": "/app/istio/agentcore",
+        "config_path": os.environ.get(
+            "ISTIO_AGENT_CONFIG_PATH",
+            os.path.join(os.path.dirname(__file__), "..", "..", "..", "workshop-module-7", "module-7", "agentcore-istio-agent", ".bedrock_agentcore.yaml"),
+        ),
+        "placeholder": "Istio 서비스 메시 상태를 질문하세요... (예: mTLS 설정 상태를 확인해주세요)",
+        "scenarios": {
+            "서비스 연결 실패": "productpage에서 reviews 서비스로의 요청이 503 에러를 반환합니다. 원인을 분석해주세요.",
+            "mTLS 감사": "메시 전체의 mTLS 설정 상태를 확인하고, STRICT 모드가 아닌 네임스페이스가 있는지 감사해주세요.",
+            "카나리 배포 검증": "reviews 서비스의 v1/v2/v3 트래픽 분배 비율이 VirtualService 설정과 일치하는지 확인해주세요.",
+            "컨트롤 플레인 상태": "istiod 컨트롤 플레인의 상태를 점검해주세요. xDS push 지연이나 오류가 있는지 확인해주세요.",
+            "지연 핫스팟 탐지": "전체 서비스의 P99 지연 시간을 스캔하고, 가장 느린 서비스의 원인을 분석해주세요.",
         },
     },
 }
@@ -193,6 +212,42 @@ def invoke_agent(agent_arn: str, token: str, session_id: str, prompt: str):
 
 
 # ---------------------------------------------------------------------------
+# Chaos Engineering helpers
+# ---------------------------------------------------------------------------
+_lambda_client = None
+
+
+def _get_lambda_client():
+    global _lambda_client
+    if _lambda_client is None:
+        _lambda_client = boto3.client("lambda", region_name=AGENT_REGION)
+    return _lambda_client
+
+
+def trigger_chaos(scenario_name: str, params: dict = None) -> dict:
+    """Invoke chaos Lambda tool and return the result."""
+    payload = {
+        "name": scenario_name,
+        "arguments": params or {},
+    }
+    try:
+        resp = _get_lambda_client().invoke(
+            FunctionName=CHAOS_LAMBDA_NAME,
+            InvocationType="RequestResponse",
+            Payload=json.dumps(payload),
+        )
+        result = json.loads(resp["Payload"].read())
+        return result
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def cleanup_chaos() -> dict:
+    """Invoke chaos-cleanup tool to revert all scenarios."""
+    return trigger_chaos("chaos-cleanup")
+
+
+# ---------------------------------------------------------------------------
 # Session state helpers
 # ---------------------------------------------------------------------------
 def _key(base: str) -> str:
@@ -231,6 +286,8 @@ if "model_id" not in st.session_state:
     st.session_state.model_id = MODELS[0][0]
 if "scenario_prompt" not in st.session_state:
     st.session_state.scenario_prompt = None
+if "active_chaos" not in st.session_state:
+    st.session_state.active_chaos = set()
 
 # ---------------------------------------------------------------------------
 # Sidebar
@@ -310,9 +367,53 @@ with st.sidebar:
 
     st.divider()
 
-    # Scenario buttons (agent-specific)
+    # Chaos Engineering controls (incident agent only)
+    if st.session_state.active_agent == "incident":
+        st.subheader("Trigger Incident")
+
+        chaos_scenarios = {
+            "CPU Stress": ("chaos-cpu-stress", "CPU 부하 생성"),
+            "Error Injection": ("chaos-error-injection", "서비스 에러 주입"),
+            "Latency Injection": ("chaos-latency-injection", "응답 지연 주입"),
+            "Pod Crash": ("chaos-pod-crash", "파드 크래시"),
+        }
+
+        # Show active chaos indicators
+        if st.session_state.active_chaos:
+            st.warning(f"Active: {', '.join(st.session_state.active_chaos)}")
+
+        for label, (tool_name, desc) in chaos_scenarios.items():
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                is_active = label in st.session_state.active_chaos
+                btn_label = f"{'🔴 ' if is_active else ''}{label}"
+                if st.button(btn_label, use_container_width=True, key=f"chaos_{tool_name}", help=desc):
+                    with st.spinner(f"Triggering {label}..."):
+                        result = trigger_chaos(tool_name)
+                        if result.get("status") == "success":
+                            st.session_state.active_chaos.add(label)
+                            st.toast(f"{label} triggered", icon="⚡")
+                        else:
+                            st.toast(f"Failed: {result.get('error', 'Unknown error')}", icon="❌")
+                    st.rerun()
+
+        if st.session_state.active_chaos:
+            if st.button("Cleanup All", use_container_width=True, key="chaos_cleanup", type="primary"):
+                with st.spinner("Cleaning up all chaos scenarios..."):
+                    result = cleanup_chaos()
+                    if result.get("status") in ("success", "partial"):
+                        st.session_state.active_chaos.clear()
+                        reverted = result.get("reverted", [])
+                        st.toast(f"Cleanup done: {len(reverted)} reverted", icon="✅")
+                    else:
+                        st.toast(f"Cleanup failed: {result.get('error', 'Unknown')}", icon="❌")
+                st.rerun()
+
+        st.divider()
+
+    # Scenario buttons (agent-specific) - Manual Analysis
     if agent_cfg["scenarios"]:
-        st.subheader("테스트 시나리오")
+        st.subheader("Manual Analysis")
         for name, prompt in agent_cfg["scenarios"].items():
             if st.button(name, use_container_width=True, key=f"scenario_{name}"):
                 st.session_state.scenario_prompt = prompt

@@ -1,0 +1,36 @@
+# =============================================================================
+# Circuit Breaker: outlierDetection on reviews service
+# 서킷 브레이커: reviews 서비스에 이상치 감지 적용 (istio-sample 네임스페이스)
+# =============================================================================
+# Apply: kubectl apply -f circuit-breaker.yaml
+# Remove: kubectl delete -f circuit-breaker.yaml
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: reviews-circuit-breaker
+  namespace: istio-sample
+spec:
+  host: reviews
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 10
+      http:
+        http1MaxPendingRequests: 5
+        http2MaxRequests: 10
+        maxRequestsPerConnection: 5
+    outlierDetection:
+      consecutive5xxErrors: 3
+      interval: 10s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 50
+  subsets:
+    - name: v1
+      labels:
+        version: v1
+    - name: v2
+      labels:
+        version: v2
+    - name: v3
+      labels:
+        version: v3

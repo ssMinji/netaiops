@@ -1,0 +1,75 @@
+# =============================================================================
+# DestinationRules - Subset Definitions for Istio Sample App
+# DestinationRule - Istio 샘플 앱 서브셋 정의
+# =============================================================================
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: productpage
+  namespace: istio-sample
+spec:
+  host: productpage
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 100
+      http:
+        h2UpgradePolicy: DEFAULT
+        http1MaxPendingRequests: 100
+        http2MaxRequests: 100
+  subsets:
+    - name: v1
+      labels:
+        version: v1
+---
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: reviews
+  namespace: istio-sample
+spec:
+  host: reviews
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 100
+      http:
+        http1MaxPendingRequests: 100
+  subsets:
+    - name: v1
+      labels:
+        version: v1
+    - name: v2
+      labels:
+        version: v2
+    - name: v3
+      labels:
+        version: v3
+---
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: ratings
+  namespace: istio-sample
+spec:
+  host: ratings
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 100
+  subsets:
+    - name: v1
+      labels:
+        version: v1
+---
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: details
+  namespace: istio-sample
+spec:
+  host: details
+  subsets:
+    - name: v1
+      labels:
+        version: v1

@@ -1,0 +1,56 @@
+# =============================================================================
+# VirtualServices - Weighted Routing for Istio Sample App
+# VirtualService - 가중치 라우팅 (reviews: v1=80%, v2=10%, v3=10%)
+# =============================================================================
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: reviews
+  namespace: istio-sample
+spec:
+  hosts:
+    - reviews
+  http:
+    - route:
+        - destination:
+            host: reviews
+            subset: v1
+          weight: 80
+        - destination:
+            host: reviews
+            subset: v2
+          weight: 10
+        - destination:
+            host: reviews
+            subset: v3
+          weight: 10
+---
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: ratings
+  namespace: istio-sample
+spec:
+  hosts:
+    - ratings
+  http:
+    - route:
+        - destination:
+            host: ratings
+            subset: v1
+          weight: 100
+---
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: details
+  namespace: istio-sample
+spec:
+  hosts:
+    - details
+  http:
+    - route:
+        - destination:
+            host: details
+            subset: v1
+          weight: 100

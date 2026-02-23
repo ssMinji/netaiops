@@ -1,0 +1,370 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  NetAIOps Agent Hub - Production Deployment
+  CloudFront (HTTPS) -> ALB (HTTP:80, X-Custom-Secret) -> EC2 (port 8000, FastAPI/Docker)
+
+# =============================================================================
+Parameters:
+# =============================================================================
+  InstanceType:
+    Type: String
+    Default: t3.medium
+    AllowedValues: [t3.small, t3.medium, t3.large]
+    Description: EC2 instance type
+
+  LatestAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+    Description: Amazon Linux 2023 latest AMI
+
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC ID (use default VPC)
+
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: At least 2 public subnets in different AZs for ALB
+
+  InstanceSubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: Public subnet for EC2 instance
+
+  AppS3Bucket:
+    Type: String
+    Default: netaiops-deploy-175678592674-us-east-1
+    Description: S3 bucket containing the app tarball
+
+  AppS3Key:
+    Type: String
+    Default: netaiops-app.tar.gz
+    Description: S3 key for the app tarball
+
+  AgentRegion:
+    Type: String
+    Default: us-east-1
+    Description: AWS region for AgentCore runtime
+
+  KeyPairName:
+    Type: String
+    Default: ''
+    Description: (Optional) EC2 key pair for SSH access
+
+Conditions:
+  HasKeyPair: !Not [!Equals [!Ref KeyPairName, '']]
+
+# =============================================================================
+Resources:
+# =============================================================================
+
+  # ==========================================================================
+  # IAM Role + Instance Profile
+  # ==========================================================================
+  EC2Role:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${AWS::StackName}-ec2-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: AgentHubAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: SSMParameterAccess
+                Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                  - ssm:GetParameters
+                  - ssm:GetParametersByPath
+                Resource:
+                  - !Sub 'arn:aws:ssm:${AgentRegion}:${AWS::AccountId}:parameter/a2a/*'
+                  - !Sub 'arn:aws:ssm:${AgentRegion}:${AWS::AccountId}:parameter/app/*'
+              - Sid: LambdaInvoke
+                Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource:
+                  - !Sub 'arn:aws:lambda:${AgentRegion}:${AWS::AccountId}:function:incident-chaos-tools'
+              - Sid: S3AppDownload
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                Resource:
+                  - !Sub 'arn:aws:s3:::${AppS3Bucket}/${AppS3Key}'
+              - Sid: CloudWatchLogs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: '*'
+
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Sub '${AWS::StackName}-ec2-profile'
+      Roles:
+        - !Ref EC2Role
+
+  # ==========================================================================
+  # Security Groups
+  # ==========================================================================
+  ALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub '${AWS::StackName} ALB - CloudFront origin-facing only'
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourcePrefixListId: pl-3b927c52
+          Description: Allow HTTP from CloudFront managed prefix list
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-alb-sg'
+
+  EC2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub '${AWS::StackName} EC2 - ALB access only'
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8000
+          ToPort: 8000
+          SourceSecurityGroupId: !Ref ALBSecurityGroup
+          Description: Allow port 8000 from ALB
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-ec2-sg'
+
+  # ==========================================================================
+  # Application Load Balancer
+  # ==========================================================================
+  ApplicationLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub '${AWS::StackName}-alb'
+      Scheme: internet-facing
+      Type: application
+      IpAddressType: ipv4
+      SecurityGroups:
+        - !Ref ALBSecurityGroup
+      Subnets: !Ref SubnetIds
+      LoadBalancerAttributes:
+        - Key: idle_timeout.timeout_seconds
+          Value: '300'
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-alb'
+
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub '${AWS::StackName}-tg'
+      Protocol: HTTP
+      Port: 8000
+      VpcId: !Ref VpcId
+      TargetType: instance
+      HealthCheckEnabled: true
+      HealthCheckProtocol: HTTP
+      HealthCheckPath: /api/config
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 10
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
+      TargetGroupAttributes:
+        - Key: deregistration_delay.timeout_seconds
+          Value: '30'
+      Targets:
+        - Id: !Ref EC2Instance
+          Port: 8000
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-tg'
+
+  # ALB Listener: default 403, forward only when X-Custom-Secret matches
+  ALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref ApplicationLoadBalancer
+      Protocol: HTTP
+      Port: 80
+      DefaultActions:
+        - Type: fixed-response
+          FixedResponseConfig:
+            StatusCode: '403'
+            ContentType: text/plain
+            MessageBody: Forbidden
+
+  ALBListenerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn: !Ref ALBListener
+      Priority: 1
+      Conditions:
+        - Field: http-header
+          HttpHeaderConfig:
+            HttpHeaderName: X-Custom-Secret
+            Values:
+              - !Sub '${AWS::StackName}-${AWS::AccountId}-secret'
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref TargetGroup
+
+  # ==========================================================================
+  # EC2 Instance
+  # ==========================================================================
+  EC2Instance:
+    Type: AWS::EC2::Instance
+    CreationPolicy:
+      ResourceSignal:
+        Timeout: PT20M
+    Properties:
+      InstanceType: !Ref InstanceType
+      ImageId: !Ref LatestAmiId
+      SubnetId: !Ref InstanceSubnetId
+      SecurityGroupIds:
+        - !Ref EC2SecurityGroup
+      IamInstanceProfile: !Ref EC2InstanceProfile
+      KeyName: !If [HasKeyPair, !Ref KeyPairName, !Ref 'AWS::NoValue']
+      MetadataOptions:
+        HttpEndpoint: enabled
+        HttpTokens: required
+        HttpPutResponseHopLimit: 2
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: 30
+            VolumeType: gp3
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-ec2'
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          exec > /var/log/userdata.log 2>&1
+          set -ex
+
+          # Signal function (AL2023 has cfn-signal pre-installed)
+          signal_cfn() {
+            /opt/aws/bin/cfn-signal -e $1 \
+              --stack ${AWS::StackName} \
+              --resource EC2Instance \
+              --region ${AWS::Region} || true
+          }
+          trap 'signal_cfn 1' ERR
+
+          # Install Docker
+          yum install -y docker
+          systemctl enable docker
+          systemctl start docker
+          usermod -aG docker ec2-user
+
+          # Download app from S3
+          cd /home/ec2-user
+          aws s3 cp s3://${AppS3Bucket}/${AppS3Key} app.tar.gz --region ${AWS::Region}
+          tar xzf app.tar.gz
+          chown -R ec2-user:ec2-user app
+
+          # Build Docker image
+          cd /home/ec2-user/app
+          docker build -t netaiops-hub .
+
+          # Run container (no AWS_PROFILE = instance role used)
+          docker run -d \
+            --name netaiops-hub \
+            --restart unless-stopped \
+            -p 8000:8000 \
+            -e AGENT_REGION=${AgentRegion} \
+            netaiops-hub
+
+          # Wait for health check
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8000/api/config > /dev/null 2>&1; then
+              echo "App is healthy"
+              signal_cfn 0
+              exit 0
+            fi
+            sleep 5
+          done
+
+          # If we get here, health check never passed
+          echo "Health check failed after all retries"
+          signal_cfn 1
+          exit 1
+
+  # ==========================================================================
+  # CloudFront Distribution
+  # ==========================================================================
+  CloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    DependsOn: ApplicationLoadBalancer
+    Properties:
+      DistributionConfig:
+        Comment: !Sub '${AWS::StackName} - NetAIOps Agent Hub'
+        Enabled: true
+        HttpVersion: http2and3
+        PriceClass: PriceClass_100
+        Origins:
+          - Id: alb-origin
+            DomainName: !GetAtt ApplicationLoadBalancer.DNSName
+            CustomOriginConfig:
+              HTTPPort: 80
+              OriginProtocolPolicy: http-only
+              OriginReadTimeout: 60
+              OriginKeepaliveTimeout: 60
+            OriginCustomHeaders:
+              - HeaderName: X-Custom-Secret
+                HeaderValue: !Sub '${AWS::StackName}-${AWS::AccountId}-secret'
+        DefaultCacheBehavior:
+          TargetOriginId: alb-origin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+            - PUT
+            - POST
+            - PATCH
+            - DELETE
+          CachedMethods:
+            - GET
+            - HEAD
+          CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+          OriginRequestPolicyId: 216adef6-5c7f-47e4-b989-5492eafa07d3
+          Compress: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-cf'
+
+# =============================================================================
+Outputs:
+# =============================================================================
+  CloudFrontURL:
+    Description: Public HTTPS URL (CloudFront)
+    Value: !Sub 'https://${CloudFrontDistribution.DomainName}'
+
+  CloudFrontDistributionId:
+    Description: CloudFront Distribution ID
+    Value: !Ref CloudFrontDistribution
+
+  ALBDNSName:
+    Description: ALB DNS Name (direct access should return 403)
+    Value: !GetAtt ApplicationLoadBalancer.DNSName
+
+  EC2InstanceId:
+    Description: EC2 Instance ID
+    Value: !Ref EC2Instance
+
+  SecretHeaderValue:
+    Description: X-Custom-Secret header value (for debugging)
+    Value: !Sub '${AWS::StackName}-${AWS::AccountId}-secret'

@@ -1,0 +1,96 @@
+{
+ "Description": "NetAIOps Infrastructure - Modules 5 (K8s Diagnostics) & 6 (Incident Analysis)",
+ "Resources": {
+  "Module5NestedStackModule5NestedStackResourceCF75426F": {
+   "Type": "AWS::CloudFormation::Stack",
+   "Properties": {
+    "TemplateURL": {
+     "Fn::Join": [
+      "",
+      [
+       "https://s3.us-east-1.",
+       {
+        "Ref": "AWS::URLSuffix"
+       },
+       "/cdk-hnb659fds-assets-175678592674-us-east-1/98232fc6cc931ed14ac8f80b26d2ea97507f4cb9b158fa3aa03afae8c963ccd2.json"
+      ]
+     ]
+    }
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module5.NestedStack/Module5.NestedStackResource",
+    "aws:asset:path": "NetAIOpsInfraStackModule5C9A7C163.nested.template.json",
+    "aws:asset:property": "TemplateURL"
+   }
+  },
+  "Module6NestedStackModule6NestedStackResource643CADB2": {
+   "Type": "AWS::CloudFormation::Stack",
+   "Properties": {
+    "TemplateURL": {
+     "Fn::Join": [
+      "",
+      [
+       "https://s3.us-east-1.",
+       {
+        "Ref": "AWS::URLSuffix"
+       },
+       "/cdk-hnb659fds-assets-175678592674-us-east-1/326a7658369112657245d12ea21afc67877bbc371880710c5b7bda8027490a49.json"
+      ]
+     ]
+    }
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module6.NestedStack/Module6.NestedStackResource",
+    "aws:asset:path": "NetAIOpsInfraStackModule6B7618BD1.nested.template.json",
+    "aws:asset:property": "TemplateURL"
+   }
+  },
+  "CDKMetadata": {
+   "Type": "AWS::CDK::Metadata",
+   "Properties": {
+    "Analytics": "v2:deflate64:H4sIAAAAAAAA/zPSMzK20DNQTCwv1k1OydbNyUzSqw4uSUzO1nFOywMzanXy8lNS9bKK9cuMDPSMDPQMFLOKMzN1i0rzSjJzU/WCIDQAXHt2/EoAAAA="
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/CDKMetadata/Default"
+   }
+  }
+ },
+ "Parameters": {
+  "BootstrapVersion": {
+   "Type": "AWS::SSM::Parameter::Value<String>",
+   "Default": "/cdk-bootstrap/hnb659fds/version",
+   "Description": "Version of the CDK Bootstrap resources in this environment, automatically retrieved from SSM Parameter Store. [cdk:skip]"
+  }
+ },
+ "Rules": {
+  "CheckBootstrapVersion": {
+   "Assertions": [
+    {
+     "Assert": {
+      "Fn::Not": [
+       {
+        "Fn::Contains": [
+         [
+          "1",
+          "2",
+          "3",
+          "4",
+          "5"
+         ],
+         {
+          "Ref": "BootstrapVersion"
+         }
+        ]
+       }
+      ]
+     },
+     "AssertDescription": "CDK bootstrap stack version 6 required. Please run 'cdk bootstrap' with a recent version of the CDK CLI."
+    }
+   ]
+  }
+ }
+}

@@ -1,0 +1,382 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Istio Mesh Diagnostics Agent - Cognito + IAM + SSM (Module 7)'
+
+Parameters:
+  UserPoolName:
+    Type: String
+    Default: 'IstioMeshPool'
+  MachineAppClientName:
+    Type: String
+    Default: 'IstioMachineClient'
+  WebAppClientName:
+    Type: String
+    Default: 'IstioWebClient'
+
+Resources:
+
+  # ========== Cognito User Pool ==========
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Ref UserPoolName
+      MfaConfiguration: 'OFF'
+      UsernameConfiguration:
+        CaseSensitive: false
+      UsernameAttributes:
+        - email
+      AutoVerifiedAttributes:
+        - email
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: false
+          RequireUppercase: true
+
+  AdminGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      GroupName: admin
+      UserPoolId: !Ref UserPool
+      Precedence: 1
+
+  UserGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      GroupName: user
+      UserPoolId: !Ref UserPool
+      Precedence: 2
+
+  # ========== Resource Server (OAuth2 scopes) ==========
+  ResourceServer:
+    Type: AWS::Cognito::UserPoolResourceServer
+    Properties:
+      UserPoolId: !Ref UserPool
+      Identifier: !Join
+        - '-'
+        - - 'istio-mesh-server'
+          - !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]]
+      Name: !Join
+        - '-'
+        - - 'Istio Mesh Server'
+          - !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]]
+      Scopes:
+        - ScopeName: 'gateway:read'
+          ScopeDescription: 'Read access'
+        - ScopeName: 'gateway:write'
+          ScopeDescription: 'Write access'
+
+  # ========== Web Client (PKCE auth for frontend) ==========
+  WebUserPoolClient:
+    DependsOn: ResourceServer
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Ref WebAppClientName
+      UserPoolId: !Ref UserPool
+      GenerateSecret: false
+      AllowedOAuthFlows:
+        - code
+      AllowedOAuthScopes:
+        - openid
+        - email
+        - profile
+        - !Join ['', ['istio-mesh-server-', !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]], '/gateway:read']]
+        - !Join ['', ['istio-mesh-server-', !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]], '/gateway:write']]
+      AllowedOAuthFlowsUserPoolClient: true
+      CallbackURLs:
+        - http://localhost:8501/
+        - https://example.com/auth/callback
+      LogoutURLs:
+        - http://localhost:8501/
+      SupportedIdentityProviders:
+        - COGNITO
+      AccessTokenValidity: 60
+      IdTokenValidity: 60
+      RefreshTokenValidity: 30
+      TokenValidityUnits:
+        AccessToken: minutes
+        IdToken: minutes
+        RefreshToken: days
+
+  # ========== Machine Client (M2M auth for agent runtime) ==========
+  MachineUserPoolClient:
+    DependsOn: ResourceServer
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Ref MachineAppClientName
+      UserPoolId: !Ref UserPool
+      GenerateSecret: true
+      ExplicitAuthFlows:
+        - ALLOW_REFRESH_TOKEN_AUTH
+      AllowedOAuthFlows:
+        - client_credentials
+      AllowedOAuthScopes:
+        - !Join ['', ['istio-mesh-server-', !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]], '/gateway:read']]
+        - !Join ['', ['istio-mesh-server-', !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]], '/gateway:write']]
+      AllowedOAuthFlowsUserPoolClient: true
+      SupportedIdentityProviders:
+        - COGNITO
+      AccessTokenValidity: 60
+      IdTokenValidity: 60
+      RefreshTokenValidity: 1
+      TokenValidityUnits:
+        AccessToken: minutes
+        IdToken: minutes
+        RefreshToken: days
+
+  # ========== Cognito Domain ==========
+  UserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      UserPoolId: !Ref UserPool
+      Domain: !Join ['', ['istioagent-', !Ref 'AWS::AccountId', '-', !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]]]]
+
+  # ========== IAM Execution Role (EKS + Istio + AgentCore permissions) ==========
+  AgentCoreExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${AWS::StackName}-gateway-execution-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - bedrock-agentcore.amazonaws.com
+                - lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: IstioAgentCoreExecutionPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # ECR
+              - Effect: Allow
+                Action:
+                  - ecr:GetAuthorizationToken
+                  - ecr:BatchGetImage
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchCheckLayerAvailability
+                Resource: '*'
+              # Bedrock AgentCore control + runtime
+              - Effect: Allow
+                Action:
+                  - bedrock-agentcore-control:*
+                  - bedrock-agentcore:*
+                Resource: '*'
+              # Bedrock model invocation
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                  - bedrock:GetFoundationModel
+                  - bedrock:ListFoundationModels
+                  - bedrock:GetInferenceProfile
+                  - bedrock:ListInferenceProfiles
+                Resource:
+                  - 'arn:aws:bedrock:*::foundation-model/*'
+                  - !Sub 'arn:aws:bedrock:*:${AWS::AccountId}:inference-profile/*'
+              # EKS (read-only for diagnostics)
+              - Effect: Allow
+                Action:
+                  - eks:DescribeCluster
+                  - eks:ListClusters
+                  - eks:DescribeNodegroup
+                  - eks:ListNodegroups
+                  - eks:DescribeFargateProfile
+                  - eks:ListFargateProfiles
+                  - eks:DescribeAddon
+                  - eks:ListAddons
+                  - eks:DescribeUpdate
+                  - eks:ListUpdates
+                  - eks:ListInsights
+                  - eks:DescribeInsight
+                  - eks:AccessKubernetesApi
+                Resource: '*'
+              # Amazon Managed Prometheus (AMP)
+              - Effect: Allow
+                Action:
+                  - aps:QueryMetrics
+                  - aps:GetMetricData
+                  - aps:GetSeries
+                  - aps:GetLabels
+                  - aps:ListWorkspaces
+                  - aps:DescribeWorkspace
+                Resource: '*'
+              # CloudWatch Logs + Metrics
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - logs:DescribeLogGroups
+                  - logs:DescribeLogStreams
+                  - logs:StartQuery
+                  - logs:StopQuery
+                  - logs:GetQueryResults
+                  - logs:FilterLogEvents
+                  - logs:GetLogEvents
+                  - cloudwatch:GetMetricStatistics
+                  - cloudwatch:GetMetricData
+                  - cloudwatch:ListMetrics
+                  - cloudwatch:DescribeAlarms
+                Resource: '*'
+              # EC2/VPC
+              - Effect: Allow
+                Action:
+                  - ec2:DescribeVpcs
+                  - ec2:DescribeSubnets
+                  - ec2:DescribeSecurityGroups
+                  - ec2:DescribeRouteTables
+                  - ec2:DescribeNetworkInterfaces
+                  - ec2:DescribeNetworkAcls
+                  - ec2:DescribeAvailabilityZones
+                Resource: '*'
+              # IAM
+              - Effect: Allow
+                Action:
+                  - iam:GetRole
+                  - iam:PassRole
+                  - iam:ListAttachedRolePolicies
+                  - iam:ListRolePolicies
+                  - iam:GetRolePolicy
+                  - iam:GetPolicy
+                  - iam:GetPolicyVersion
+                  - iam:CreateServiceLinkedRole
+                Resource: '*'
+              # SSM (both Istio and K8s prefixes for cross-module access)
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                  - ssm:GetParameters
+                  - ssm:GetParametersByPath
+                  - ssm:PutParameter
+                Resource:
+                  - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/app/istio/*'
+                  - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/a2a/app/k8s/*'
+              # Lambda invoke (for Prometheus tools Lambda)
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource:
+                  - !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:istio-prometheus-tools'
+              # Secrets Manager + KMS
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                  - secretsmanager:DescribeSecret
+                  - kms:Decrypt
+                  - kms:DescribeKey
+                Resource: '*'
+              # X-Ray tracing
+              - Effect: Allow
+                Action:
+                  - xray:PutTraceSegments
+                  - xray:PutTelemetryRecords
+                  - xray:GetSamplingRules
+                  - xray:GetSamplingTargets
+                Resource: '*'
+              # Memory service
+              - Effect: Allow
+                Action:
+                  - bedrock-agentcore-memory:*
+                Resource:
+                  - !Sub 'arn:aws:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:memory/*'
+
+  # ========== SSM Parameters ==========
+  MachineClientIdParam:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: '/app/istio/agentcore/machine_client_id'
+      Type: String
+      Value: !Ref MachineUserPoolClient
+
+  MachineClientSecretParam:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: '/app/istio/agentcore/machine_client_secret'
+      Type: String
+      Value: !GetAtt MachineUserPoolClient.ClientSecret
+
+  WebClientIdParam:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: '/app/istio/agentcore/web_client_id'
+      Type: String
+      Value: !Ref WebUserPoolClient
+
+  UserPoolIdParam:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: '/app/istio/agentcore/cognito_pool_id'
+      Type: String
+      Value: !Ref UserPool
+
+  CognitoProviderParam:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: '/app/istio/agentcore/cognito_provider'
+      Type: String
+      Value: !Join ['', ['istio-mesh-', !Ref 'AWS::AccountId', '-', !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]]]]
+
+  CognitoAuthScopeParam:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: '/app/istio/agentcore/auth_scope'
+      Type: String
+      Value: !Join
+        - ' '
+        - - !Join ['', ['istio-mesh-server-', !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]], '/gateway:read']]
+          - !Join ['', ['istio-mesh-server-', !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]], '/gateway:write']]
+
+  CognitoDiscoveryURLParam:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: '/app/istio/agentcore/cognito_discovery_url'
+      Type: String
+      Value: !Sub 'https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPool}/.well-known/openid-configuration'
+
+  CognitoTokenURLParam:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: '/app/istio/agentcore/cognito_token_url'
+      Type: String
+      Value: !Join ['', [!Sub 'https://istioagent-${AWS::AccountId}-', !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]], !Sub '.auth.${AWS::Region}.amazoncognito.com/oauth2/token']]
+
+  CognitoAuthURLParam:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: '/app/istio/agentcore/cognito_auth_url'
+      Type: String
+      Value: !Join ['', [!Sub 'https://istioagent-${AWS::AccountId}-', !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]], !Sub '.auth.${AWS::Region}.amazoncognito.com/oauth2/authorize']]
+
+  CognitoDomainParam:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: '/app/istio/agentcore/cognito_domain'
+      Type: String
+      Value: !Join ['', [!Sub 'https://istioagent-${AWS::AccountId}-', !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]], !Sub '.auth.${AWS::Region}.amazoncognito.com']]
+
+  GatewayIAMRoleParam:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: '/app/istio/agentcore/gateway_iam_role'
+      Type: String
+      Value: !GetAtt AgentCoreExecutionRole.Arn
+
+Outputs:
+  UserPoolId:
+    Value: !Ref UserPool
+    Export:
+      Name: !Sub "${AWS::StackName}-UserPoolId"
+  WebClientId:
+    Value: !Ref WebUserPoolClient
+  MachineClientId:
+    Value: !Ref MachineUserPoolClient
+  CognitoDomain:
+    Value: !Join ['', [!Sub 'https://istioagent-${AWS::AccountId}-', !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]], !Sub '.auth.${AWS::Region}.amazoncognito.com']]
+  ExecutionRoleArn:
+    Value: !GetAtt AgentCoreExecutionRole.Arn

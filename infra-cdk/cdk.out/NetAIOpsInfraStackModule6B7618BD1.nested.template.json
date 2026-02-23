@@ -1,0 +1,2057 @@
+{
+ "Description": "Module 6 - Incident Analysis Agent (Cognito, Lambdas, Gateway, Runtime, Monitoring)",
+ "Resources": {
+  "CognitoAuthUserPoolF3109634": {
+   "Type": "AWS::Cognito::UserPool",
+   "Properties": {
+    "AccountRecoverySetting": {
+     "RecoveryMechanisms": [
+      {
+       "Name": "verified_phone_number",
+       "Priority": 1
+      },
+      {
+       "Name": "verified_email",
+       "Priority": 2
+      }
+     ]
+    },
+    "AdminCreateUserConfig": {
+     "AllowAdminCreateUserOnly": true
+    },
+    "AutoVerifiedAttributes": [
+     "email"
+    ],
+    "EmailVerificationMessage": "The verification code to your new account is {####}",
+    "EmailVerificationSubject": "Verify your new account",
+    "MfaConfiguration": "OFF",
+    "Policies": {
+     "PasswordPolicy": {
+      "MinimumLength": 8,
+      "RequireLowercase": true,
+      "RequireNumbers": true,
+      "RequireSymbols": false,
+      "RequireUppercase": true
+     }
+    },
+    "SmsVerificationMessage": "The verification code to your new account is {####}",
+    "UserPoolName": "IncidentAnalysisPool",
+    "UsernameAttributes": [
+     "email"
+    ],
+    "UsernameConfiguration": {
+     "CaseSensitive": false
+    },
+    "VerificationMessageTemplate": {
+     "DefaultEmailOption": "CONFIRM_WITH_CODE",
+     "EmailMessage": "The verification code to your new account is {####}",
+     "EmailSubject": "Verify your new account",
+     "SmsMessage": "The verification code to your new account is {####}"
+    }
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module6/Cognito/Auth/UserPool/Resource"
+   }
+  },
+  "CognitoAuthUserPoolResourceServerC459EC4E": {
+   "Type": "AWS::Cognito::UserPoolResourceServer",
+   "Properties": {
+    "Identifier": "incident-resource-server",
+    "Name": "incident-resource-server",
+    "Scopes": [
+     {
+      "ScopeDescription": "Invoke Incident Analysis agent runtime",
+      "ScopeName": "invoke"
+     }
+    ],
+    "UserPoolId": {
+     "Ref": "CognitoAuthUserPoolF3109634"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module6/Cognito/Auth/UserPool/ResourceServer/Resource"
+   }
+  },
+  "CognitoAuthUserPoolMachineClient59D678FA": {
+   "Type": "AWS::Cognito::UserPoolClient",
+   "Properties": {
+    "AccessTokenValidity": 60,
+    "AllowedOAuthFlows": [
+     "client_credentials"
+    ],
+    "AllowedOAuthFlowsUserPoolClient": true,
+    "AllowedOAuthScopes": [
+     {
+      "Fn::Join": [
+       "",
+       [
+        {
+         "Ref": "CognitoAuthUserPoolResourceServerC459EC4E"
+        },
+        "/invoke"
+       ]
+      ]
+     }
+    ],
+    "ClientName": "IncidentAnalysisMachineClient",
+    "GenerateSecret": true,
+    "IdTokenValidity": 60,
+    "RefreshTokenValidity": 1440,
+    "SupportedIdentityProviders": [
+     "COGNITO"
+    ],
+    "TokenValidityUnits": {
+     "AccessToken": "minutes",
+     "IdToken": "minutes",
+     "RefreshToken": "minutes"
+    },
+    "UserPoolId": {
+     "Ref": "CognitoAuthUserPoolF3109634"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module6/Cognito/Auth/UserPool/MachineClient/Resource"
+   }
+  },
+  "CognitoAuthUserPoolWebClient2044EECF": {
+   "Type": "AWS::Cognito::UserPoolClient",
+   "Properties": {
+    "AccessTokenValidity": 60,
+    "AllowedOAuthFlows": [
+     "code"
+    ],
+    "AllowedOAuthFlowsUserPoolClient": true,
+    "AllowedOAuthScopes": [
+     "openid",
+     "email",
+     "profile",
+     {
+      "Fn::Join": [
+       "",
+       [
+        {
+         "Ref": "CognitoAuthUserPoolResourceServerC459EC4E"
+        },
+        "/invoke"
+       ]
+      ]
+     }
+    ],
+    "CallbackURLs": [
+     "http://localhost:8502/",
+     "https://example.com/auth/callback"
+    ],
+    "ClientName": "IncidentAnalysisWebClient",
+    "GenerateSecret": false,
+    "IdTokenValidity": 60,
+    "LogoutURLs": [
+     "http://localhost:8502/"
+    ],
+    "RefreshTokenValidity": 43200,
+    "SupportedIdentityProviders": [
+     "COGNITO"
+    ],
+    "TokenValidityUnits": {
+     "AccessToken": "minutes",
+     "IdToken": "minutes",
+     "RefreshToken": "minutes"
+    },
+    "UserPoolId": {
+     "Ref": "CognitoAuthUserPoolF3109634"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module6/Cognito/Auth/UserPool/WebClient/Resource"
+   }
+  },
+  "CognitoAuthUserPoolDomain8A02E454": {
+   "Type": "AWS::Cognito::UserPoolDomain",
+   "Properties": {
+    "Domain": {
+     "Fn::Join": [
+      "",
+      [
+       "incident-analysis-",
+       {
+        "Ref": "AWS::AccountId"
+       }
+      ]
+     ]
+    },
+    "UserPoolId": {
+     "Ref": "CognitoAuthUserPoolF3109634"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module6/Cognito/Auth/UserPool/Domain/Resource"
+   }
+  },
+  "CognitoAuthAdminGroup3CFA449A": {
+   "Type": "AWS::Cognito::UserPoolGroup",
+   "Properties": {
+    "GroupName": "admin",
+    "Precedence": 1,
+    "UserPoolId": {
+     "Ref": "CognitoAuthUserPoolF3109634"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module6/Cognito/Auth/AdminGroup"
+   }
+  },
+  "CognitoAuthUserGroup250D7F94": {
+   "Type": "AWS::Cognito::UserPoolGroup",
+   "Properties": {
+    "GroupName": "user",
+    "Precedence": 2,
+    "UserPoolId": {
+     "Ref": "CognitoAuthUserPoolF3109634"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module6/Cognito/Auth/UserGroup"
+   }
+  },
+  "CognitoAuthParamuserpoolid1E587840": {
+   "Type": "AWS::SSM::Parameter",
+   "Properties": {
+    "Name": "/app/incident/agentcore/userpool_id",
+    "Type": "String",
+    "Value": {
+     "Ref": "CognitoAuthUserPoolF3109634"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module6/Cognito/Auth/Param-userpool_id/Resource"
+   }
+  },
+  "CognitoAuthParammachineclientid2A638E59": {
+   "Type": "AWS::SSM::Parameter",
+   "Properties": {
+    "Name": "/app/incident/agentcore/machine_client_id",
+    "Type": "String",
+    "Value": {
+     "Ref": "CognitoAuthUserPoolMachineClient59D678FA"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module6/Cognito/Auth/Param-machine_client_id/Resource"
+   }
+  },
+  "CognitoAuthParamcognitodiscoveryurl61A8B430": {
+   "Type": "AWS::SSM::Parameter",
+   "Properties": {
+    "Name": "/app/incident/agentcore/cognito_discovery_url",
+    "Type": "String",
+    "Value": {
+     "Fn::Join": [
+      "",
+      [
+       "https://cognito-idp.",
+       {
+        "Ref": "AWS::Region"
+       },
+       ".amazonaws.com/",
+       {
+        "Ref": "CognitoAuthUserPoolF3109634"
+       },
+       "/.well-known/openid-configuration"
+      ]
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module6/Cognito/Auth/Param-cognito_discovery_url/Resource"
+   }
+  },
+  "CognitoAuthParamcognitotokenurl6B11EDC3": {
+   "Type": "AWS::SSM::Parameter",
+   "Properties": {
+    "Name": "/app/incident/agentcore/cognito_token_url",
+    "Type": "String",
+    "Value": {
+     "Fn::Join": [
+      "",
+      [
+       "https://incident-analysis-",
+       {
+        "Ref": "AWS::AccountId"
+       },
+       ".auth.",
+       {
+        "Ref": "AWS::Region"
+       },
+       ".amazoncognito.com/oauth2/token"
+      ]
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module6/Cognito/Auth/Param-cognito_token_url/Resource"
+   }
+  },
+  "CognitoAuthParamcognitoauthurl0949CB91": {
+   "Type": "AWS::SSM::Parameter",
+   "Properties": {
+    "Name": "/app/incident/agentcore/cognito_auth_url",
+    "Type": "String",
+    "Value": {
+     "Fn::Join": [
+      "",
+      [
+       "https://incident-analysis-",
+       {
+        "Ref": "AWS::AccountId"
+       },
+       ".auth.",
+       {
+        "Ref": "AWS::Region"
+       },
+       ".amazoncognito.com/oauth2/authorize"
+      ]
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module6/Cognito/Auth/Param-cognito_auth_url/Resource"
+   }
+  },
+  "CognitoAuthParamcognitodomain8278040E": {
+   "Type": "AWS::SSM::Parameter",
+   "Properties": {
+    "Name": "/app/incident/agentcore/cognito_domain",
+    "Type": "String",
+    "Value": {
+     "Fn::Join": [
+      "",
+      [
+       "https://incident-analysis-",
+       {
+        "Ref": "AWS::AccountId"
+       },
+       ".auth.",
+       {
+        "Ref": "AWS::Region"
+       },
+       ".amazoncognito.com"
+      ]
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module6/Cognito/Auth/Param-cognito_domain/Resource"
+   }
+  },
+  "CognitoAuthParamcognitoauthscopeCEE1623E": {
+   "Type": "AWS::SSM::Parameter",
+   "Properties": {
+    "Name": "/app/incident/agentcore/cognito_auth_scope",
+    "Type": "String",
+    "Value": "incident-resource-server/invoke"
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module6/Cognito/Auth/Param-cognito_auth_scope/Resource"
+   }
+  },
+  "CognitoAuthParamwebclientid0E07CFED": {
+   "Type": "AWS::SSM::Parameter",
+   "Properties": {
+    "Name": "/app/incident/agentcore/web_client_id",
+    "Type": "String",
+    "Value": {
+     "Ref": "CognitoAuthUserPoolWebClient2044EECF"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module6/Cognito/Auth/Param-web_client_id/Resource"
+   }
+  },
+  "CognitoAuthParamcognitoprovider9F756036": {
+   "Type": "AWS::SSM::Parameter",
+   "Properties": {
+    "Name": "/app/incident/agentcore/cognito_provider",
+    "Type": "String",
+    "Value": {
+     "Fn::Join": [
+      "",
+      [
+       "incident-analysis-",
+       {
+        "Ref": "AWS::AccountId"
+       }
+      ]
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module6/Cognito/Auth/Param-cognito_provider/Resource"
+   }
+  },
+  "CognitoAuthParammachineclientsecret9BA43012": {
+   "Type": "AWS::SSM::Parameter",
+   "Properties": {
+    "Name": "/app/incident/agentcore/machine_client_secret",
+    "Type": "String",
+    "Value": {
+     "Fn::GetAtt": [
+      "CognitoAuthUserPoolMachineClient59D678FA",
+      "ClientSecret"
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module6/Cognito/Auth/Param-machine_client_secret"
+   }
+  },
+  "CognitoExecutionRoleF6227C07": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": [
+         "bedrock-agentcore.amazonaws.com",
+         "lambda.amazonaws.com"
+        ]
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "ManagedPolicyArns": [
+     {
+      "Fn::Join": [
+       "",
+       [
+        "arn:",
+        {
+         "Ref": "AWS::Partition"
+        },
+        ":iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+       ]
+      ]
+     }
+    ],
+    "RoleName": "incident-gateway-execution-role"
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module6/Cognito/ExecutionRole/Resource"
+   }
+  },
+  "CognitoExecutionRoleDefaultPolicy507D9598": {
+   "Type": "AWS::IAM::Policy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": [
+        "bedrock-agentcore-control:CreateGateway",
+        "bedrock-agentcore-control:CreateOAuth2CredentialProvider",
+        "bedrock-agentcore-control:CreateRuntime",
+        "bedrock-agentcore-control:DeleteGateway",
+        "bedrock-agentcore-control:DeleteOAuth2CredentialProvider",
+        "bedrock-agentcore-control:DeleteRuntime",
+        "bedrock-agentcore-control:GetGateway",
+        "bedrock-agentcore-control:GetOAuth2CredentialProvider",
+        "bedrock-agentcore-control:GetRuntime",
+        "bedrock-agentcore-control:ListGateways",
+        "bedrock-agentcore-control:ListOAuth2CredentialProviders",
+        "bedrock-agentcore-control:ListRuntimes",
+        "bedrock-agentcore-control:UpdateGateway",
+        "bedrock-agentcore-control:UpdateOAuth2CredentialProvider",
+        "bedrock-agentcore-control:UpdateRuntime",
+        "bedrock-agentcore:CreateMemory",
+        "bedrock-agentcore:DeleteMemory",
+        "bedrock-agentcore:GetMemory",
+        "bedrock-agentcore:GetResourceOauth2Token",
+        "bedrock-agentcore:InvokeRuntime",
+        "bedrock-agentcore:ListMemories",
+        "bedrock-agentcore:UpdateMemory",
+        "cloudwatch:DescribeAlarms",
+        "cloudwatch:GetDashboard",
+        "cloudwatch:GetMetricData",
+        "cloudwatch:GetMetricStatistics",
+        "cloudwatch:ListDashboards",
+        "cloudwatch:ListMetrics",
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:BatchGetImage",
+        "ecr:GetAuthorizationToken",
+        "ecr:GetDownloadUrlForLayer",
+        "es:DescribeElasticsearchDomains",
+        "es:ESHttpDelete",
+        "es:ESHttpGet",
+        "es:ESHttpHead",
+        "es:ESHttpPost",
+        "es:ESHttpPut",
+        "es:ListDomainNames",
+        "logs:CreateLogGroup",
+        "logs:CreateLogStream",
+        "logs:DescribeLogGroups",
+        "logs:DescribeLogStreams",
+        "logs:FilterLogEvents",
+        "logs:GetLogEvents",
+        "logs:GetLogGroupFields",
+        "logs:GetQueryResults",
+        "logs:PutLogEvents",
+        "logs:StartQuery",
+        "logs:StopQuery",
+        "xray:GetSamplingRules",
+        "xray:GetSamplingTargets",
+        "xray:PutTelemetryRecords",
+        "xray:PutTraceSegments"
+       ],
+       "Effect": "Allow",
+       "Resource": "*"
+      },
+      {
+       "Action": [
+        "lambda:GetFunction",
+        "lambda:InvokeFunction",
+        "lambda:ListFunctions"
+       ],
+       "Effect": "Allow",
+       "Resource": [
+        {
+         "Fn::Join": [
+          "",
+          [
+           "arn:aws:lambda:",
+           {
+            "Ref": "AWS::Region"
+           },
+           ":",
+           {
+            "Ref": "AWS::AccountId"
+           },
+           ":function:incident-*"
+          ]
+         ]
+        },
+        {
+         "Fn::Join": [
+          "",
+          [
+           "arn:aws:lambda:",
+           {
+            "Ref": "AWS::Region"
+           },
+           ":",
+           {
+            "Ref": "AWS::AccountId"
+           },
+           ":function:netops-*"
+          ]
+         ]
+        }
+       ]
+      },
+      {
+       "Action": [
+        "ssm:GetParameter",
+        "ssm:GetParameters",
+        "ssm:GetParametersByPath",
+        "ssm:PutParameter"
+       ],
+       "Effect": "Allow",
+       "Resource": [
+        {
+         "Fn::Join": [
+          "",
+          [
+           "arn:aws:ssm:",
+           {
+            "Ref": "AWS::Region"
+           },
+           ":",
+           {
+            "Ref": "AWS::AccountId"
+           },
+           ":parameter/app/incident/*"
+          ]
+         ]
+        },
+        {
+         "Fn::Join": [
+          "",
+          [
+           "arn:aws:ssm:",
+           {
+            "Ref": "AWS::Region"
+           },
+           ":",
+           {
+            "Ref": "AWS::AccountId"
+           },
+           ":parameter/app/netops/*"
+          ]
+         ]
+        }
+       ]
+      },
+      {
+       "Action": [
+        "iam:CreateServiceLinkedRole",
+        "iam:GetRole",
+        "iam:GetRolePolicy",
+        "iam:ListAttachedRolePolicies",
+        "iam:ListRolePolicies",
+        "iam:PassRole"
+       ],
+       "Effect": "Allow",
+       "Resource": [
+        {
+         "Fn::Join": [
+          "",
+          [
+           "arn:aws:iam::",
+           {
+            "Ref": "AWS::AccountId"
+           },
+           ":role/aws-service-role/*"
+          ]
+         ]
+        },
+        {
+         "Fn::Join": [
+          "",
+          [
+           "arn:aws:iam::",
+           {
+            "Ref": "AWS::AccountId"
+           },
+           ":role/incident-gateway-execution-role"
+          ]
+         ]
+        }
+       ]
+      },
+      {
+       "Action": [
+        "bedrock-agentcore-memory:CreateMemory",
+        "bedrock-agentcore-memory:DeleteMemory",
+        "bedrock-agentcore-memory:DeleteMemoryData",
+        "bedrock-agentcore-memory:GetMemory",
+        "bedrock-agentcore-memory:GetMemoryData",
+        "bedrock-agentcore-memory:ListMemories",
+        "bedrock-agentcore-memory:PutMemoryData",
+        "bedrock-agentcore-memory:UpdateMemory",
+        "bedrock-agentcore:CreateEvent",
+        "bedrock-agentcore:DeleteEvent",
+        "bedrock-agentcore:GetEvent",
+        "bedrock-agentcore:ListEvents"
+       ],
+       "Effect": "Allow",
+       "Resource": [
+        {
+         "Fn::Join": [
+          "",
+          [
+           "arn:aws:bedrock-agentcore:",
+           {
+            "Ref": "AWS::Region"
+           },
+           ":",
+           {
+            "Ref": "AWS::AccountId"
+           },
+           ":memory/IncidentAnalysisAgentMemory*"
+          ]
+         ]
+        },
+        {
+         "Fn::Join": [
+          "",
+          [
+           "arn:aws:bedrock-agentcore:",
+           {
+            "Ref": "AWS::Region"
+           },
+           ":",
+           {
+            "Ref": "AWS::AccountId"
+           },
+           ":memory/IncidentAnalysisAgentMemory*/*"
+          ]
+         ]
+        }
+       ]
+      },
+      {
+       "Action": [
+        "kms:Decrypt",
+        "kms:DescribeKey",
+        "kms:GenerateDataKey",
+        "secretsmanager:DescribeSecret",
+        "secretsmanager:GetSecretValue",
+        "secretsmanager:ListSecrets"
+       ],
+       "Effect": "Allow",
+       "Resource": [
+        {
+         "Fn::Join": [
+          "",
+          [
+           "arn:aws:kms:",
+           {
+            "Ref": "AWS::Region"
+           },
+           ":",
+           {
+            "Ref": "AWS::AccountId"
+           },
+           ":key/*"
+          ]
+         ]
+        },
+        {
+         "Fn::Join": [
+          "",
+          [
+           "arn:aws:secretsmanager:",
+           {
+            "Ref": "AWS::Region"
+           },
+           ":",
+           {
+            "Ref": "AWS::AccountId"
+           },
+           ":secret:*"
+          ]
+         ]
+        }
+       ]
+      },
+      {
+       "Action": [
+        "bedrock:GetFoundationModel",
+        "bedrock:GetInferenceProfile",
+        "bedrock:InvokeModel",
+        "bedrock:InvokeModelWithResponseStream",
+        "bedrock:ListFoundationModels",
+        "bedrock:ListInferenceProfiles"
+       ],
+       "Effect": "Allow",
+       "Resource": [
+        "arn:aws:bedrock:*::foundation-model/*",
+        {
+         "Fn::Join": [
+          "",
+          [
+           "arn:aws:bedrock:*:",
+           {
+            "Ref": "AWS::AccountId"
+           },
+           ":inference-profile/*"
+          ]
+         ]
+        }
+       ]
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "PolicyName": "CognitoExecutionRoleDefaultPolicy507D9598",
+    "Roles": [
+     {
+      "Ref": "CognitoExecutionRoleF6227C07"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module6/Cognito/ExecutionRole/DefaultPolicy/Resource"
+   }
+  },
+  "CognitoExecutionRoleParamA3146552": {
+   "Type": "AWS::SSM::Parameter",
+   "Properties": {
+    "Name": "/app/incident/agentcore/gateway_iam_role",
+    "Type": "String",
+    "Value": {
+     "Fn::GetAtt": [
+      "CognitoExecutionRoleF6227C07",
+      "Arn"
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module6/Cognito/ExecutionRoleParam/Resource"
+   }
+  },
+  "CognitoLambdaRoleD35B0D4A": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": [
+         "bedrock-agentcore.amazonaws.com",
+         "lambda.amazonaws.com"
+        ]
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "ManagedPolicyArns": [
+     {
+      "Fn::Join": [
+       "",
+       [
+        "arn:",
+        {
+         "Ref": "AWS::Partition"
+        },
+        ":iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+       ]
+      ]
+     }
+    ],
+    "RoleName": "incident-tools-lambda-role"
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module6/Cognito/LambdaRole/Resource"
+   }
+  },
+  "CognitoLambdaRoleDefaultPolicy80A303F7": {
+   "Type": "AWS::IAM::Policy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": [
+        "cloudwatch:DescribeAlarms",
+        "cloudwatch:DescribeAlarmsForMetric",
+        "cloudwatch:GetMetricData",
+        "cloudwatch:GetMetricStatistics",
+        "cloudwatch:ListMetrics",
+        "logs:DescribeLogGroups",
+        "logs:DescribeLogStreams",
+        "logs:DescribeQueries",
+        "logs:FilterLogEvents",
+        "logs:GetLogEvents",
+        "logs:GetQueryResults",
+        "logs:StartQuery",
+        "logs:StopQuery"
+       ],
+       "Effect": "Allow",
+       "Resource": "*",
+       "Sid": "CloudWatchReadForContainerInsight"
+      },
+      {
+       "Action": [
+        "es:ESHttpDelete",
+        "es:ESHttpGet",
+        "es:ESHttpHead",
+        "es:ESHttpPatch",
+        "es:ESHttpPost",
+        "es:ESHttpPut"
+       ],
+       "Effect": "Allow",
+       "Resource": "*",
+       "Sid": "OpenSearchAccess"
+      },
+      {
+       "Action": [
+        "ssm:GetParameter",
+        "ssm:GetParameters"
+       ],
+       "Effect": "Allow",
+       "Resource": "arn:aws:ssm:*:*:parameter/app/incident/*",
+       "Sid": "SSMParameterAccess"
+      },
+      {
+       "Action": [
+        "eks:DescribeCluster",
+        "eks:ListClusters"
+       ],
+       "Effect": "Allow",
+       "Resource": "*",
+       "Sid": "EKSAccessForChaosLambda"
+      },
+      {
+       "Action": "sts:GetCallerIdentity",
+       "Effect": "Allow",
+       "Resource": "*",
+       "Sid": "STSForEKSAuth"
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "PolicyName": "CognitoLambdaRoleDefaultPolicy80A303F7",
+    "Roles": [
+     {
+      "Ref": "CognitoLambdaRoleD35B0D4A"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module6/Cognito/LambdaRole/DefaultPolicy/Resource"
+   }
+  },
+  "LambdasDatadogFunction361874F0": {
+   "Type": "AWS::Lambda::Function",
+   "Properties": {
+    "Architectures": [
+     "x86_64"
+    ],
+    "Code": {
+     "ImageUri": {
+      "Fn::Sub": "175678592674.dkr.ecr.us-east-1.${AWS::URLSuffix}/cdk-hnb659fds-container-assets-175678592674-us-east-1:50ce69547f733f375697d5e2aa72b6071fbe833bdcdacdf4b1744e3dc19261cb"
+     }
+    },
+    "Description": "Incident Analysis - Datadog metrics, events, traces, monitors",
+    "Environment": {
+     "Variables": {
+      "DATADOG_SITE": "us5.datadoghq.com"
+     }
+    },
+    "FunctionName": "incident-datadog-tools",
+    "MemorySize": 1024,
+    "PackageType": "Image",
+    "Role": {
+     "Fn::GetAtt": [
+      "CognitoLambdaRoleD35B0D4A",
+      "Arn"
+     ]
+    },
+    "Timeout": 300
+   },
+   "DependsOn": [
+    "CognitoLambdaRoleDefaultPolicy80A303F7",
+    "CognitoLambdaRoleD35B0D4A"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module6/Lambdas/Datadog/Function/Resource",
+    "aws:asset:path": "/home/ec2-user/workspace/netaiops/infra-cdk/lambda-src/module6/datadog",
+    "aws:asset:dockerfile-path": "Dockerfile",
+    "aws:asset:property": "Code.ImageUri"
+   }
+  },
+  "LambdasOpenSearchFunctionA26DA9A7": {
+   "Type": "AWS::Lambda::Function",
+   "Properties": {
+    "Architectures": [
+     "x86_64"
+    ],
+    "Code": {
+     "ImageUri": {
+      "Fn::Sub": "175678592674.dkr.ecr.us-east-1.${AWS::URLSuffix}/cdk-hnb659fds-container-assets-175678592674-us-east-1:fbd47267b8355c72beda8646995a27492e18cd6bb5038b0ad7afa41e06223d6f"
+     }
+    },
+    "Description": "Incident Analysis - OpenSearch log search, anomaly detection",
+    "Environment": {
+     "Variables": {
+      "AWS_REGION_NAME": "us-east-1"
+     }
+    },
+    "FunctionName": "incident-opensearch-tools",
+    "MemorySize": 1024,
+    "PackageType": "Image",
+    "Role": {
+     "Fn::GetAtt": [
+      "CognitoLambdaRoleD35B0D4A",
+      "Arn"
+     ]
+    },
+    "Timeout": 300
+   },
+   "DependsOn": [
+    "CognitoLambdaRoleDefaultPolicy80A303F7",
+    "CognitoLambdaRoleD35B0D4A"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module6/Lambdas/OpenSearch/Function/Resource",
+    "aws:asset:path": "/home/ec2-user/workspace/netaiops/infra-cdk/lambda-src/module6/opensearch",
+    "aws:asset:dockerfile-path": "Dockerfile",
+    "aws:asset:property": "Code.ImageUri"
+   }
+  },
+  "LambdasContainerInsightFunction0164A2B7": {
+   "Type": "AWS::Lambda::Function",
+   "Properties": {
+    "Architectures": [
+     "x86_64"
+    ],
+    "Code": {
+     "ImageUri": {
+      "Fn::Sub": "175678592674.dkr.ecr.us-east-1.${AWS::URLSuffix}/cdk-hnb659fds-container-assets-175678592674-us-east-1:da8bb1fb9cd71024176ce82d1aedc603f224775e1050949723e6dc6c45f1fa86"
+     }
+    },
+    "Description": "Incident Analysis - EKS Container Insights pod/node/cluster metrics",
+    "FunctionName": "incident-container-insight-tools",
+    "MemorySize": 1024,
+    "PackageType": "Image",
+    "Role": {
+     "Fn::GetAtt": [
+      "CognitoLambdaRoleD35B0D4A",
+      "Arn"
+     ]
+    },
+    "Timeout": 300
+   },
+   "DependsOn": [
+    "CognitoLambdaRoleDefaultPolicy80A303F7",
+    "CognitoLambdaRoleD35B0D4A"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module6/Lambdas/ContainerInsight/Function/Resource",
+    "aws:asset:path": "/home/ec2-user/workspace/netaiops/infra-cdk/lambda-src/module6/container-insight",
+    "aws:asset:dockerfile-path": "Dockerfile",
+    "aws:asset:property": "Code.ImageUri"
+   }
+  },
+  "LambdasChaosFunction3D2464FC": {
+   "Type": "AWS::Lambda::Function",
+   "Properties": {
+    "Architectures": [
+     "x86_64"
+    ],
+    "Code": {
+     "ImageUri": {
+      "Fn::Sub": "175678592674.dkr.ecr.us-east-1.${AWS::URLSuffix}/cdk-hnb659fds-container-assets-175678592674-us-east-1:5452dec774e99b8e313ea600117cb1a744a4ce9f2a254aa6660d174a661d4385"
+     }
+    },
+    "Description": "Incident Analysis - Chaos engineering for EKS incident injection",
+    "Environment": {
+     "Variables": {
+      "EKS_CLUSTER_NAME": "netaiops-eks-cluster",
+      "EKS_CLUSTER_REGION": "us-west-2"
+     }
+    },
+    "FunctionName": "incident-chaos-tools",
+    "MemorySize": 1024,
+    "PackageType": "Image",
+    "Role": {
+     "Fn::GetAtt": [
+      "CognitoLambdaRoleD35B0D4A",
+      "Arn"
+     ]
+    },
+    "Timeout": 300
+   },
+   "DependsOn": [
+    "CognitoLambdaRoleDefaultPolicy80A303F7",
+    "CognitoLambdaRoleD35B0D4A"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module6/Lambdas/Chaos/Function/Resource",
+    "aws:asset:path": "/home/ec2-user/workspace/netaiops/infra-cdk/lambda-src/module6/chaos",
+    "aws:asset:dockerfile-path": "Dockerfile",
+    "aws:asset:property": "Code.ImageUri"
+   }
+  },
+  "LambdasAlarmTriggerFunctionF72FAE0C": {
+   "Type": "AWS::Lambda::Function",
+   "Properties": {
+    "Architectures": [
+     "x86_64"
+    ],
+    "Code": {
+     "ImageUri": {
+      "Fn::Sub": "175678592674.dkr.ecr.us-east-1.${AWS::URLSuffix}/cdk-hnb659fds-container-assets-175678592674-us-east-1:83de8d69289e0fb3fe35ec8f3bff0dcc2e06a8a6ad84eb29869814c29eb94d6f"
+     }
+    },
+    "Description": "Incident Analysis - SNS alarm handler that triggers agent runtime",
+    "Environment": {
+     "Variables": {
+      "AGENT_REGION": "us-east-1"
+     }
+    },
+    "FunctionName": "incident-alarm-trigger",
+    "MemorySize": 1024,
+    "PackageType": "Image",
+    "Role": {
+     "Fn::GetAtt": [
+      "CognitoLambdaRoleD35B0D4A",
+      "Arn"
+     ]
+    },
+    "Timeout": 300
+   },
+   "DependsOn": [
+    "CognitoLambdaRoleDefaultPolicy80A303F7",
+    "CognitoLambdaRoleD35B0D4A"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module6/Lambdas/AlarmTrigger/Function/Resource",
+    "aws:asset:path": "/home/ec2-user/workspace/netaiops/infra-cdk/lambda-src/module6/alarm-trigger",
+    "aws:asset:dockerfile-path": "Dockerfile",
+    "aws:asset:property": "Code.ImageUri"
+   }
+  },
+  "LambdasGitHubFunctionF747E7FD": {
+   "Type": "AWS::Lambda::Function",
+   "Properties": {
+    "Architectures": [
+     "x86_64"
+    ],
+    "Code": {
+     "ImageUri": {
+      "Fn::Sub": "175678592674.dkr.ecr.us-east-1.${AWS::URLSuffix}/cdk-hnb659fds-container-assets-175678592674-us-east-1:665e1f04d72bf49fad8e0dd1744fc01961387fe09dfe063f4c01b22c6bb596cd"
+     }
+    },
+    "Description": "Incident Analysis - GitHub issue creation and management",
+    "Environment": {
+     "Variables": {
+      "AGENT_REGION": "us-east-1"
+     }
+    },
+    "FunctionName": "incident-github-tools",
+    "MemorySize": 1024,
+    "PackageType": "Image",
+    "Role": {
+     "Fn::GetAtt": [
+      "CognitoLambdaRoleD35B0D4A",
+      "Arn"
+     ]
+    },
+    "Timeout": 300
+   },
+   "DependsOn": [
+    "CognitoLambdaRoleDefaultPolicy80A303F7",
+    "CognitoLambdaRoleD35B0D4A"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module6/Lambdas/GitHub/Function/Resource",
+    "aws:asset:path": "/home/ec2-user/workspace/netaiops/infra-cdk/lambda-src/module6/github",
+    "aws:asset:dockerfile-path": "Dockerfile",
+    "aws:asset:property": "Code.ImageUri"
+   }
+  },
+  "LambdasParamdatadoglambdaarn6FF5E5AD": {
+   "Type": "AWS::SSM::Parameter",
+   "Properties": {
+    "Name": "/app/incident/agentcore/datadog_lambda_arn",
+    "Type": "String",
+    "Value": {
+     "Fn::GetAtt": [
+      "LambdasDatadogFunction361874F0",
+      "Arn"
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module6/Lambdas/Param-datadog_lambda_arn/Resource"
+   }
+  },
+  "LambdasParamopensearchlambdaarnF048C7CB": {
+   "Type": "AWS::SSM::Parameter",
+   "Properties": {
+    "Name": "/app/incident/agentcore/opensearch_lambda_arn",
+    "Type": "String",
+    "Value": {
+     "Fn::GetAtt": [
+      "LambdasOpenSearchFunctionA26DA9A7",
+      "Arn"
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module6/Lambdas/Param-opensearch_lambda_arn/Resource"
+   }
+  },
+  "LambdasParamcontainerinsightlambdaarn26AA934D": {
+   "Type": "AWS::SSM::Parameter",
+   "Properties": {
+    "Name": "/app/incident/agentcore/container_insight_lambda_arn",
+    "Type": "String",
+    "Value": {
+     "Fn::GetAtt": [
+      "LambdasContainerInsightFunction0164A2B7",
+      "Arn"
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module6/Lambdas/Param-container_insight_lambda_arn/Resource"
+   }
+  },
+  "LambdasParamchaoslambdaarn4264628E": {
+   "Type": "AWS::SSM::Parameter",
+   "Properties": {
+    "Name": "/app/incident/agentcore/chaos_lambda_arn",
+    "Type": "String",
+    "Value": {
+     "Fn::GetAtt": [
+      "LambdasChaosFunction3D2464FC",
+      "Arn"
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module6/Lambdas/Param-chaos_lambda_arn/Resource"
+   }
+  },
+  "LambdasParamalarmtriggerlambdaarn8C7E2113": {
+   "Type": "AWS::SSM::Parameter",
+   "Properties": {
+    "Name": "/app/incident/agentcore/alarm_trigger_lambda_arn",
+    "Type": "String",
+    "Value": {
+     "Fn::GetAtt": [
+      "LambdasAlarmTriggerFunctionF72FAE0C",
+      "Arn"
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module6/Lambdas/Param-alarm_trigger_lambda_arn/Resource"
+   }
+  },
+  "LambdasParamgithublambdaarn4107F2F6": {
+   "Type": "AWS::SSM::Parameter",
+   "Properties": {
+    "Name": "/app/incident/agentcore/github_lambda_arn",
+    "Type": "String",
+    "Value": {
+     "Fn::GetAtt": [
+      "LambdasGitHubFunctionF747E7FD",
+      "Arn"
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module6/Lambdas/Param-github_lambda_arn/Resource"
+   }
+  },
+  "GatewayD4406D74": {
+   "Type": "AWS::BedrockAgentCore::Gateway",
+   "Properties": {
+    "Name": "incident-analysis-gateway",
+    "RoleArn": {
+     "Fn::GetAtt": [
+      "CognitoExecutionRoleF6227C07",
+      "Arn"
+     ]
+    },
+    "ProtocolType": "MCP",
+    "AuthorizerType": "CUSTOM_JWT",
+    "AuthorizerConfiguration": {
+     "CustomJWTAuthorizer": {
+      "AllowedClients": [
+       {
+        "Ref": "CognitoAuthUserPoolMachineClient59D678FA"
+       }
+      ],
+      "DiscoveryUrl": {
+       "Fn::Join": [
+        "",
+        [
+         "https://cognito-idp.",
+         {
+          "Ref": "AWS::Region"
+         },
+         ".amazonaws.com/",
+         {
+          "Ref": "CognitoAuthUserPoolF3109634"
+         },
+         "/.well-known/openid-configuration"
+        ]
+       ]
+      }
+     }
+    },
+    "Description": "AgentCore Incident Analysis Gateway"
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module6/Gateway/Gateway/Gateway"
+   }
+  },
+  "GatewayTargetDatadogTools4FEA445B": {
+   "Type": "AWS::BedrockAgentCore::GatewayTarget",
+   "Properties": {
+    "GatewayIdentifier": {
+     "Fn::GetAtt": [
+      "GatewayD4406D74",
+      "GatewayId"
+     ]
+    },
+    "Name": "DatadogTools",
+    "Description": "Datadog metrics, events, traces, and monitor tools",
+    "TargetConfiguration": {
+     "Mcp": {
+      "Lambda": {
+       "LambdaArn": {
+        "Fn::GetAtt": [
+         "LambdasDatadogFunction361874F0",
+         "Arn"
+        ]
+       },
+       "ToolSchema": {
+        "InlinePayload": [
+         {
+          "name": "datadog-query-metrics",
+          "description": "Query Datadog timeseries metrics (CPU, Memory, Latency, Error Rate).",
+          "inputSchema": {
+           "type": "object",
+           "properties": {
+            "query": {
+             "type": "string",
+             "description": "Datadog metrics query (e.g., 'avg:system.cpu.user{service:web-app}')"
+            },
+            "from_ts": {
+             "type": "integer",
+             "description": "Start timestamp (Unix epoch seconds). Default: 1 hour ago"
+            },
+            "to_ts": {
+             "type": "integer",
+             "description": "End timestamp (Unix epoch seconds). Default: now"
+            }
+           },
+           "required": [
+            "query"
+           ]
+          }
+         },
+         {
+          "name": "datadog-get-events",
+          "description": "Get Datadog events and alert history.",
+          "inputSchema": {
+           "type": "object",
+           "properties": {
+            "tags": {
+             "type": "string",
+             "description": "Comma-separated tags to filter events (e.g., 'service:web-app,env:prod')"
+            },
+            "priority": {
+             "type": "string",
+             "description": "Event priority filter: 'normal' or 'low'. Default: all",
+             "enum": [
+              "normal",
+              "low"
+             ]
+            },
+            "hours": {
+             "type": "integer",
+             "description": "How many hours back to search. Default: 24"
+            }
+           },
+           "required": []
+          }
+         },
+         {
+          "name": "datadog-get-traces",
+          "description": "Get APM traces for slow or error requests.",
+          "inputSchema": {
+           "type": "object",
+           "properties": {
+            "service": {
+             "type": "string",
+             "description": "Service name to filter traces"
+            },
+            "operation": {
+             "type": "string",
+             "description": "Operation name filter (optional)"
+            },
+            "min_duration_ms": {
+             "type": "integer",
+             "description": "Minimum trace duration in milliseconds. Default: 1000"
+            },
+            "hours": {
+             "type": "integer",
+             "description": "How many hours back to search. Default: 1"
+            },
+            "status": {
+             "type": "string",
+             "description": "Trace status filter: 'error' or 'ok'",
+             "enum": [
+              "error",
+              "ok"
+             ]
+            }
+           },
+           "required": [
+            "service"
+           ]
+          }
+         },
+         {
+          "name": "datadog-get-monitors",
+          "description": "Get Datadog monitor statuses.",
+          "inputSchema": {
+           "type": "object",
+           "properties": {
+            "monitor_tags": {
+             "type": "string",
+             "description": "Comma-separated tags to filter monitors"
+            },
+            "name_filter": {
+             "type": "string",
+             "description": "Filter monitors by name substring"
+            }
+           },
+           "required": []
+          }
+         }
+        ]
+       }
+      }
+     }
+    },
+    "CredentialProviderConfigurations": [
+     {
+      "CredentialProviderType": "GATEWAY_IAM_ROLE"
+     }
+    ]
+   },
+   "DependsOn": [
+    "GatewayD4406D74"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module6/Gateway/Gateway/Target-DatadogTools"
+   }
+  },
+  "GatewayTargetOpenSearchTools05AD1673": {
+   "Type": "AWS::BedrockAgentCore::GatewayTarget",
+   "Properties": {
+    "GatewayIdentifier": {
+     "Fn::GetAtt": [
+      "GatewayD4406D74",
+      "GatewayId"
+     ]
+    },
+    "Name": "OpenSearchTools",
+    "Description": "OpenSearch log search, anomaly detection, and error summary tools",
+    "TargetConfiguration": {
+     "Mcp": {
+      "Lambda": {
+       "LambdaArn": {
+        "Fn::GetAtt": [
+         "LambdasOpenSearchFunctionA26DA9A7",
+         "Arn"
+        ]
+       },
+       "ToolSchema": {
+        "InlinePayload": [
+         {
+          "name": "opensearch-search-logs",
+          "description": "Search application logs by keyword or pattern.",
+          "inputSchema": {
+           "type": "object",
+           "properties": {
+            "index": {
+             "type": "string",
+             "description": "OpenSearch index name or pattern (e.g., 'app-logs-*')"
+            },
+            "query": {
+             "type": "string",
+             "description": "Search query string (e.g., 'error AND timeout')"
+            },
+            "hours": {
+             "type": "integer",
+             "description": "How many hours back to search. Default: 1"
+            },
+            "size": {
+             "type": "integer",
+             "description": "Maximum number of results. Default: 50"
+            }
+           },
+           "required": [
+            "index",
+            "query"
+           ]
+          }
+         },
+         {
+          "name": "opensearch-anomaly-detection",
+          "description": "Detect anomalous log volume patterns over time.",
+          "inputSchema": {
+           "type": "object",
+           "properties": {
+            "index": {
+             "type": "string",
+             "description": "OpenSearch index name or pattern"
+            },
+            "field": {
+             "type": "string",
+             "description": "Field to analyze for anomalies (e.g., 'level', 'status_code'). Default: 'level'"
+            },
+            "hours": {
+             "type": "integer",
+             "description": "How many hours back to analyze. Default: 6"
+            },
+            "interval": {
+             "type": "string",
+             "description": "Bucket interval (e.g., '5m', '15m', '1h'). Default: '5m'"
+            }
+           },
+           "required": [
+            "index"
+           ]
+          }
+         },
+         {
+          "name": "opensearch-get-error-summary",
+          "description": "Get error log statistics grouped by type.",
+          "inputSchema": {
+           "type": "object",
+           "properties": {
+            "index": {
+             "type": "string",
+             "description": "OpenSearch index name or pattern"
+            },
+            "hours": {
+             "type": "integer",
+             "description": "How many hours back to search. Default: 24"
+            },
+            "group_by": {
+             "type": "string",
+             "description": "Field to group errors by. Default: 'error_type'"
+            }
+           },
+           "required": [
+            "index"
+           ]
+          }
+         }
+        ]
+       }
+      }
+     }
+    },
+    "CredentialProviderConfigurations": [
+     {
+      "CredentialProviderType": "GATEWAY_IAM_ROLE"
+     }
+    ]
+   },
+   "DependsOn": [
+    "GatewayD4406D74"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module6/Gateway/Gateway/Target-OpenSearchTools"
+   }
+  },
+  "GatewayTargetContainerInsightTools7D99D4A8": {
+   "Type": "AWS::BedrockAgentCore::GatewayTarget",
+   "Properties": {
+    "GatewayIdentifier": {
+     "Fn::GetAtt": [
+      "GatewayD4406D74",
+      "GatewayId"
+     ]
+    },
+    "Name": "ContainerInsightTools",
+    "Description": "EKS Container Insights pod, node, and cluster metrics tools",
+    "TargetConfiguration": {
+     "Mcp": {
+      "Lambda": {
+       "LambdaArn": {
+        "Fn::GetAtt": [
+         "LambdasContainerInsightFunction0164A2B7",
+         "Arn"
+        ]
+       },
+       "ToolSchema": {
+        "InlinePayload": [
+         {
+          "name": "container-insight-pod-metrics",
+          "description": "Get EKS pod CPU, Memory, Network metrics.",
+          "inputSchema": {
+           "type": "object",
+           "properties": {
+            "cluster_name": {
+             "type": "string",
+             "description": "EKS cluster name"
+            },
+            "namespace": {
+             "type": "string",
+             "description": "Kubernetes namespace. Default: all namespaces"
+            },
+            "pod_name": {
+             "type": "string",
+             "description": "Specific pod name filter (optional)"
+            },
+            "minutes": {
+             "type": "integer",
+             "description": "How many minutes back. Default: 60"
+            },
+            "period": {
+             "type": "integer",
+             "description": "Metric period in seconds. Default: 300"
+            }
+           },
+           "required": [
+            "cluster_name"
+           ]
+          }
+         },
+         {
+          "name": "container-insight-node-metrics",
+          "description": "Get EKS node resource utilization.",
+          "inputSchema": {
+           "type": "object",
+           "properties": {
+            "cluster_name": {
+             "type": "string",
+             "description": "EKS cluster name"
+            },
+            "node_name": {
+             "type": "string",
+             "description": "Specific node name (optional)"
+            },
+            "minutes": {
+             "type": "integer",
+             "description": "How many minutes back. Default: 60"
+            },
+            "period": {
+             "type": "integer",
+             "description": "Metric period in seconds. Default: 300"
+            }
+           },
+           "required": [
+            "cluster_name"
+           ]
+          }
+         },
+         {
+          "name": "container-insight-cluster-overview",
+          "description": "Get cluster-wide health overview including node/pod counts and resource usage.",
+          "inputSchema": {
+           "type": "object",
+           "properties": {
+            "cluster_name": {
+             "type": "string",
+             "description": "EKS cluster name"
+            },
+            "minutes": {
+             "type": "integer",
+             "description": "How many minutes back. Default: 30"
+            },
+            "period": {
+             "type": "integer",
+             "description": "Metric period in seconds. Default: 300"
+            }
+           },
+           "required": [
+            "cluster_name"
+           ]
+          }
+         }
+        ]
+       }
+      }
+     }
+    },
+    "CredentialProviderConfigurations": [
+     {
+      "CredentialProviderType": "GATEWAY_IAM_ROLE"
+     }
+    ]
+   },
+   "DependsOn": [
+    "GatewayD4406D74"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module6/Gateway/Gateway/Target-ContainerInsightTools"
+   }
+  },
+  "GatewayGatewayIdParam71AC8AA6": {
+   "Type": "AWS::SSM::Parameter",
+   "Properties": {
+    "Name": "/app/incident/agentcore/gateway_id",
+    "Type": "String",
+    "Value": {
+     "Fn::GetAtt": [
+      "GatewayD4406D74",
+      "GatewayId"
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module6/Gateway/Gateway/GatewayIdParam/Resource"
+   }
+  },
+  "GatewayGatewayNameParam6AC27475": {
+   "Type": "AWS::SSM::Parameter",
+   "Properties": {
+    "Name": "/app/incident/agentcore/gateway_name",
+    "Type": "String",
+    "Value": "incident-analysis-gateway"
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module6/Gateway/Gateway/GatewayNameParam/Resource"
+   }
+  },
+  "GatewayGatewayArnParam55F4B992": {
+   "Type": "AWS::SSM::Parameter",
+   "Properties": {
+    "Name": "/app/incident/agentcore/gateway_arn",
+    "Type": "String",
+    "Value": {
+     "Fn::GetAtt": [
+      "GatewayD4406D74",
+      "GatewayArn"
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module6/Gateway/Gateway/GatewayArnParam/Resource"
+   }
+  },
+  "GatewayGatewayUrlParam532CB67A": {
+   "Type": "AWS::SSM::Parameter",
+   "Properties": {
+    "Name": "/app/incident/agentcore/gateway_url",
+    "Type": "String",
+    "Value": {
+     "Fn::GetAtt": [
+      "GatewayD4406D74",
+      "GatewayUrl"
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module6/Gateway/Gateway/GatewayUrlParam/Resource"
+   }
+  },
+  "Runtime33C31BF9": {
+   "Type": "AWS::BedrockAgentCore::Runtime",
+   "Properties": {
+    "RuntimeName": "incident_analysis_agent_runtime",
+    "RoleArn": {
+     "Fn::GetAtt": [
+      "CognitoExecutionRoleF6227C07",
+      "Arn"
+     ]
+    },
+    "Description": "Incident Analysis Agent Runtime (Module 6)",
+    "NetworkConfiguration": {
+     "NetworkMode": "PUBLIC"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module6/Runtime/Runtime"
+   }
+  },
+  "RuntimeRuntimeArnParam7730D90D": {
+   "Type": "AWS::SSM::Parameter",
+   "Properties": {
+    "Name": "/app/incident/agentcore/runtime_arn",
+    "Type": "String",
+    "Value": {
+     "Fn::GetAtt": [
+      "Runtime33C31BF9",
+      "RuntimeArn"
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module6/Runtime/RuntimeArnParam/Resource"
+   }
+  },
+  "RuntimeRuntimeNameParamF9AC84C8": {
+   "Type": "AWS::SSM::Parameter",
+   "Properties": {
+    "Name": "/app/incident/agentcore/runtime_name",
+    "Type": "String",
+    "Value": "incident_analysis_agent_runtime"
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module6/Runtime/RuntimeNameParam/Resource"
+   }
+  },
+  "MonitoringAlarmsHandlerServiceRoleC86F8684": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "lambda.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "ManagedPolicyArns": [
+     {
+      "Fn::Join": [
+       "",
+       [
+        "arn:",
+        {
+         "Ref": "AWS::Partition"
+        },
+        ":iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+       ]
+      ]
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module6/Monitoring/Alarms/Handler/ServiceRole/Resource"
+   }
+  },
+  "MonitoringAlarmsHandlerServiceRoleDefaultPolicyA4D0541E": {
+   "Type": "AWS::IAM::Policy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": [
+        "cloudwatch:DeleteAlarms",
+        "cloudwatch:DescribeAlarms",
+        "cloudwatch:PutMetricAlarm",
+        "sns:CreateTopic",
+        "sns:DeleteTopic",
+        "sns:GetTopicAttributes",
+        "sns:ListSubscriptionsByTopic",
+        "sns:SetTopicAttributes",
+        "sns:Subscribe",
+        "sns:Unsubscribe"
+       ],
+       "Effect": "Allow",
+       "Resource": "*"
+      },
+      {
+       "Action": [
+        "lambda:AddPermission",
+        "lambda:RemovePermission"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::GetAtt": [
+         "LambdasAlarmTriggerFunctionF72FAE0C",
+         "Arn"
+        ]
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "PolicyName": "MonitoringAlarmsHandlerServiceRoleDefaultPolicyA4D0541E",
+    "Roles": [
+     {
+      "Ref": "MonitoringAlarmsHandlerServiceRoleC86F8684"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module6/Monitoring/Alarms/Handler/ServiceRole/DefaultPolicy/Resource"
+   }
+  },
+  "MonitoringAlarmsHandler5CA8C266": {
+   "Type": "AWS::Lambda::Function",
+   "Properties": {
+    "Code": {
+     "ZipFile": "\nimport json\nimport boto3\nimport time\n\ndef handler(event, context):\n    request_type = event['RequestType']\n    props = event['ResourceProperties']\n\n    alarm_region = props['AlarmRegion']\n    lambda_region = props['LambdaRegion']\n    sns_topic_name = props['SnsTopicName']\n    cluster_name = props['ClusterName']\n    alarm_trigger_lambda_arn = props['AlarmTriggerLambdaArn']\n    alarms = json.loads(props['Alarms'])\n    account_id = props['AccountId']\n\n    sns_client = boto3.client('sns', region_name=alarm_region)\n    cw_client = boto3.client('cloudwatch', region_name=alarm_region)\n    lambda_client = boto3.client('lambda', region_name=lambda_region)\n\n    if request_type == 'Create' or request_type == 'Update':\n        # Create SNS topic\n        topic_response = sns_client.create_topic(Name=sns_topic_name)\n        sns_topic_arn = topic_response['TopicArn']\n\n        # Set topic policy\n        policy = {\n            \"Version\": \"2012-10-17\",\n            \"Statement\": [{\n                \"Sid\": \"AllowCloudWatchAlarms\",\n                \"Effect\": \"Allow\",\n                \"Principal\": {\"Service\": \"cloudwatch.amazonaws.com\"},\n                \"Action\": \"SNS:Publish\",\n                \"Resource\": sns_topic_arn,\n                \"Condition\": {\n                    \"ArnLike\": {\n                        \"aws:SourceArn\": f\"arn:aws:cloudwatch:{alarm_region}:{account_id}:alarm:netaiops-*\"\n                    }\n                }\n            }]\n        }\n        sns_client.set_topic_attributes(\n            TopicArn=sns_topic_arn,\n            AttributeName='Policy',\n            AttributeValue=json.dumps(policy)\n        )\n\n        # Add Lambda invoke permission\n        try:\n            lambda_client.add_permission(\n                FunctionName=alarm_trigger_lambda_arn.split(':')[-1],\n                StatementId='sns-alarm-invoke',\n                Action='lambda:InvokeFunction',\n                Principal='sns.amazonaws.com',\n                SourceArn=sns_topic_arn,\n            )\n        except lambda_client.exceptions.ResourceConflictException:\n            pass  # Permission already exists\n\n        # Subscribe Lambda to SNS topic\n        sns_client.subscribe(\n            TopicArn=sns_topic_arn,\n            Protocol='lambda',\n            Endpoint=alarm_trigger_lambda_arn,\n        )\n\n        # Create CloudWatch alarms\n        for alarm in alarms:\n            cw_client.put_metric_alarm(\n                AlarmName=alarm['name'],\n                AlarmDescription=alarm['description'],\n                Namespace='ContainerInsights',\n                MetricName=alarm['metricName'],\n                Dimensions=[{'Name': 'ClusterName', 'Value': cluster_name}],\n                Statistic=alarm['statistic'],\n                Period=alarm['period'],\n                EvaluationPeriods=alarm['evaluationPeriods'],\n                DatapointsToAlarm=alarm['datapointsToAlarm'],\n                Threshold=alarm['threshold'],\n                ComparisonOperator=alarm['comparisonOperator'],\n                AlarmActions=[sns_topic_arn],\n                OKActions=[sns_topic_arn],\n                TreatMissingData='notBreaching',\n            )\n\n        return {\n            'PhysicalResourceId': sns_topic_arn,\n            'Data': {'SnsTopicArn': sns_topic_arn},\n        }\n\n    elif request_type == 'Delete':\n        sns_topic_arn = event.get('PhysicalResourceId', '')\n        if sns_topic_arn and sns_topic_arn.startswith('arn:aws:sns:'):\n            # Delete alarms\n            alarm_names = [a['name'] for a in alarms]\n            try:\n                cw_client.delete_alarms(AlarmNames=alarm_names)\n            except Exception as e:\n                print(f\"Error deleting alarms: {e}\")\n\n            # Remove Lambda permission\n            try:\n                lambda_client.remove_permission(\n                    FunctionName=alarm_trigger_lambda_arn.split(':')[-1],\n                    StatementId='sns-alarm-invoke',\n                )\n            except Exception as e:\n                print(f\"Error removing permission: {e}\")\n\n            # Delete SNS topic\n            try:\n                sns_client.delete_topic(TopicArn=sns_topic_arn)\n            except Exception as e:\n                print(f\"Error deleting topic: {e}\")\n\n        return {'PhysicalResourceId': sns_topic_arn or 'deleted'}\n"
+    },
+    "FunctionName": "netaiops-cross-region-alarm-cr",
+    "Handler": "index.handler",
+    "Role": {
+     "Fn::GetAtt": [
+      "MonitoringAlarmsHandlerServiceRoleC86F8684",
+      "Arn"
+     ]
+    },
+    "Runtime": "python3.11",
+    "Timeout": 300
+   },
+   "DependsOn": [
+    "MonitoringAlarmsHandlerServiceRoleDefaultPolicyA4D0541E",
+    "MonitoringAlarmsHandlerServiceRoleC86F8684"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module6/Monitoring/Alarms/Handler/Resource"
+   }
+  },
+  "MonitoringAlarmsProviderframeworkonEventServiceRole60E4BAC5": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "lambda.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "ManagedPolicyArns": [
+     {
+      "Fn::Join": [
+       "",
+       [
+        "arn:",
+        {
+         "Ref": "AWS::Partition"
+        },
+        ":iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+       ]
+      ]
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module6/Monitoring/Alarms/Provider/framework-onEvent/ServiceRole/Resource"
+   }
+  },
+  "MonitoringAlarmsProviderframeworkonEventServiceRoleDefaultPolicy4F779F1A": {
+   "Type": "AWS::IAM::Policy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": "lambda:InvokeFunction",
+       "Effect": "Allow",
+       "Resource": [
+        {
+         "Fn::GetAtt": [
+          "MonitoringAlarmsHandler5CA8C266",
+          "Arn"
+         ]
+        },
+        {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::GetAtt": [
+             "MonitoringAlarmsHandler5CA8C266",
+             "Arn"
+            ]
+           },
+           ":*"
+          ]
+         ]
+        }
+       ]
+      },
+      {
+       "Action": "lambda:GetFunction",
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::GetAtt": [
+         "MonitoringAlarmsHandler5CA8C266",
+         "Arn"
+        ]
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "PolicyName": "MonitoringAlarmsProviderframeworkonEventServiceRoleDefaultPolicy4F779F1A",
+    "Roles": [
+     {
+      "Ref": "MonitoringAlarmsProviderframeworkonEventServiceRole60E4BAC5"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module6/Monitoring/Alarms/Provider/framework-onEvent/ServiceRole/DefaultPolicy/Resource"
+   }
+  },
+  "MonitoringAlarmsProviderframeworkonEventFD445F48": {
+   "Type": "AWS::Lambda::Function",
+   "Properties": {
+    "Code": {
+     "S3Bucket": "cdk-hnb659fds-assets-175678592674-us-east-1",
+     "S3Key": "07a90cc3efdfc34da22208dcd9d211f06f5b0e01b21e778edc7c3966b1f61d57.zip"
+    },
+    "Description": "AWS CDK resource provider framework - onEvent (NetAIOpsInfraStack/Module6/Monitoring/Alarms/Provider)",
+    "Environment": {
+     "Variables": {
+      "USER_ON_EVENT_FUNCTION_ARN": {
+       "Fn::GetAtt": [
+        "MonitoringAlarmsHandler5CA8C266",
+        "Arn"
+       ]
+      }
+     }
+    },
+    "Handler": "framework.onEvent",
+    "LoggingConfig": {
+     "ApplicationLogLevel": "FATAL",
+     "LogFormat": "JSON"
+    },
+    "Role": {
+     "Fn::GetAtt": [
+      "MonitoringAlarmsProviderframeworkonEventServiceRole60E4BAC5",
+      "Arn"
+     ]
+    },
+    "Runtime": "nodejs22.x",
+    "Timeout": 900
+   },
+   "DependsOn": [
+    "MonitoringAlarmsProviderframeworkonEventServiceRoleDefaultPolicy4F779F1A",
+    "MonitoringAlarmsProviderframeworkonEventServiceRole60E4BAC5"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module6/Monitoring/Alarms/Provider/framework-onEvent/Resource",
+    "aws:asset:path": "/home/ec2-user/workspace/netaiops/infra-cdk/node_modules/aws-cdk-lib/custom-resources/lib/provider-framework/runtime",
+    "aws:asset:is-bundled": false,
+    "aws:asset:property": "Code"
+   }
+  },
+  "MonitoringAlarms66989066": {
+   "Type": "AWS::CloudFormation::CustomResource",
+   "Properties": {
+    "ServiceToken": {
+     "Fn::GetAtt": [
+      "MonitoringAlarmsProviderframeworkonEventFD445F48",
+      "Arn"
+     ]
+    },
+    "AlarmRegion": "us-west-2",
+    "LambdaRegion": "us-east-1",
+    "SnsTopicName": "netaiops-incident-alarm-topic",
+    "ClusterName": "netaiops-eks-cluster",
+    "AlarmTriggerLambdaArn": {
+     "Fn::GetAtt": [
+      "LambdasAlarmTriggerFunctionF72FAE0C",
+      "Arn"
+     ]
+    },
+    "Alarms": "[{\"name\":\"netaiops-cpu-spike\",\"description\":\"EKS pod CPU utilization exceeds 80% - possible CPU stress incident\",\"metricName\":\"pod_cpu_utilization\",\"statistic\":\"Average\",\"period\":60,\"evaluationPeriods\":3,\"datapointsToAlarm\":2,\"threshold\":80,\"comparisonOperator\":\"GreaterThanThreshold\"},{\"name\":\"netaiops-pod-restarts\",\"description\":\"EKS pod container restarts exceed 3 in 5 minutes - possible CrashLoopBackOff\",\"metricName\":\"pod_number_of_container_restarts\",\"statistic\":\"Sum\",\"period\":300,\"evaluationPeriods\":1,\"datapointsToAlarm\":1,\"threshold\":3,\"comparisonOperator\":\"GreaterThanThreshold\"},{\"name\":\"netaiops-node-cpu-high\",\"description\":\"EKS node CPU utilization exceeds 85% - possible node-level resource pressure\",\"metricName\":\"node_cpu_utilization\",\"statistic\":\"Average\",\"period\":60,\"evaluationPeriods\":3,\"datapointsToAlarm\":2,\"threshold\":85,\"comparisonOperator\":\"GreaterThanThreshold\"}]",
+    "AccountId": {
+     "Ref": "AWS::AccountId"
+    }
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module6/Monitoring/Alarms/Resource/Default"
+   }
+  },
+  "MonitoringAlarmsSnsTopicArnParam9143367D": {
+   "Type": "AWS::SSM::Parameter",
+   "Properties": {
+    "Name": "/app/incident/agentcore/sns_topic_arn",
+    "Type": "String",
+    "Value": {
+     "Fn::GetAtt": [
+      "MonitoringAlarms66989066",
+      "SnsTopicArn"
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module6/Monitoring/Alarms/SnsTopicArnParam/Resource"
+   }
+  },
+  "CDKMetadata": {
+   "Type": "AWS::CDK::Metadata",
+   "Properties": {
+    "Analytics": "v2:deflate64:H4sIAAAAAAAA/2WQTWvDMAyGf0vvrhbSy65ry8YuIyTsXFxHC2piq0hOSwn57yNuU8J20vvxGMvOId+8QrayV127ul13dIThCzViXUXrWmOvehgcN4Eiw/CtKAVzZ3Y/4alnUaJyLw4rlAvKEvnTzPGuIwxxCT6S2e7ZWwpL4H/yIdyfR6PqYaiiUGgKK9ZjvK/wNKMh62EoucMpT7PgjtwtYUmNprP+WFsY9uxalE9vG3zvg4vE6dKnnsVo0MnBqmJUWBx6m5KpgxLPrBRZbluraHQz03dEN7DtXYtxakeTwirahkKT1nz8nHG9RvYHeXiFQvhC9fTI1MzgaALXCCd9ueQZ5Blkq5MSraUPkTxCeZ+/pHmnEfgBAAA="
+   },
+   "Metadata": {
+    "aws:cdk:path": "NetAIOpsInfraStack/Module6/CDKMetadata/Default"
+   }
+  }
+ }
+}

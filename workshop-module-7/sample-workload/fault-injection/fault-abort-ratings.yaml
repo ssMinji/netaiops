@@ -1,0 +1,24 @@
+# =============================================================================
+# Fault Injection: HTTP 503 abort on ratings (50%)
+# 장애 주입: ratings 서비스에 503 에러 (50% 확률, istio-sample 네임스페이스)
+# =============================================================================
+# Apply: kubectl apply -f fault-abort-ratings.yaml
+# Remove: kubectl delete -f fault-abort-ratings.yaml
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: ratings
+  namespace: istio-sample
+spec:
+  hosts:
+    - ratings
+  http:
+    - fault:
+        abort:
+          percentage:
+            value: 50.0
+          httpStatus: 503
+      route:
+        - destination:
+            host: ratings
+            subset: v1

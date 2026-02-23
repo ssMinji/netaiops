@@ -66,3 +66,19 @@ coverage.xml
 tmp/
 temp/
 *.tmp
+
+# Node
+node_modules/
+
+# oh-my-claudecode
+.omc/
+
+# Build artifacts (frontend static served by backend)
+app/backend/static/
+
+# Deploy config (contains local settings)
+cfn_stack/.deploy-config
+
+# Drawio / diagrams
+*.drawio
+*.drawio.png

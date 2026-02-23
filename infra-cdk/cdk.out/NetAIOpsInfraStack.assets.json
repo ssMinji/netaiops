@@ -1,0 +1,157 @@
+{
+  "version": "48.0.0",
+  "files": {
+    "07a90cc3efdfc34da22208dcd9d211f06f5b0e01b21e778edc7c3966b1f61d57": {
+      "displayName": "Module6/Monitoring/Alarms/Provider/framework-onEvent/Code",
+      "source": {
+        "path": "/home/ec2-user/workspace/netaiops/infra-cdk/node_modules/aws-cdk-lib/custom-resources/lib/provider-framework/runtime",
+        "packaging": "zip"
+      },
+      "destinations": {
+        "175678592674-us-east-1-32e9e68c": {
+          "bucketName": "cdk-hnb659fds-assets-175678592674-us-east-1",
+          "objectKey": "07a90cc3efdfc34da22208dcd9d211f06f5b0e01b21e778edc7c3966b1f61d57.zip",
+          "region": "us-east-1",
+          "assumeRoleArn": "arn:${AWS::Partition}:iam::175678592674:role/cdk-hnb659fds-file-publishing-role-175678592674-us-east-1"
+        }
+      }
+    },
+    "98232fc6cc931ed14ac8f80b26d2ea97507f4cb9b158fa3aa03afae8c963ccd2": {
+      "displayName": "Module5 Nested Stack Template",
+      "source": {
+        "path": "NetAIOpsInfraStackModule5C9A7C163.nested.template.json",
+        "packaging": "file"
+      },
+      "destinations": {
+        "175678592674-us-east-1-ab610cb5": {
+          "bucketName": "cdk-hnb659fds-assets-175678592674-us-east-1",
+          "objectKey": "98232fc6cc931ed14ac8f80b26d2ea97507f4cb9b158fa3aa03afae8c963ccd2.json",
+          "region": "us-east-1",
+          "assumeRoleArn": "arn:${AWS::Partition}:iam::175678592674:role/cdk-hnb659fds-file-publishing-role-175678592674-us-east-1"
+        }
+      }
+    },
+    "326a7658369112657245d12ea21afc67877bbc371880710c5b7bda8027490a49": {
+      "displayName": "Module6 Nested Stack Template",
+      "source": {
+        "path": "NetAIOpsInfraStackModule6B7618BD1.nested.template.json",
+        "packaging": "file"
+      },
+      "destinations": {
+        "175678592674-us-east-1-86dc9d13": {
+          "bucketName": "cdk-hnb659fds-assets-175678592674-us-east-1",
+          "objectKey": "326a7658369112657245d12ea21afc67877bbc371880710c5b7bda8027490a49.json",
+          "region": "us-east-1",
+          "assumeRoleArn": "arn:${AWS::Partition}:iam::175678592674:role/cdk-hnb659fds-file-publishing-role-175678592674-us-east-1"
+        }
+      }
+    },
+    "c5e8d43b4450085182f8051d32cf80e5d4fb4e8cd4d951bacda0446e12234870": {
+      "displayName": "NetAIOpsInfraStack Template",
+      "source": {
+        "path": "NetAIOpsInfraStack.template.json",
+        "packaging": "file"
+      },
+      "destinations": {
+        "175678592674-us-east-1-03f62145": {
+          "bucketName": "cdk-hnb659fds-assets-175678592674-us-east-1",
+          "objectKey": "c5e8d43b4450085182f8051d32cf80e5d4fb4e8cd4d951bacda0446e12234870.json",
+          "region": "us-east-1",
+          "assumeRoleArn": "arn:${AWS::Partition}:iam::175678592674:role/cdk-hnb659fds-file-publishing-role-175678592674-us-east-1"
+        }
+      }
+    }
+  },
+  "dockerImages": {
+    "50ce69547f733f375697d5e2aa72b6071fbe833bdcdacdf4b1744e3dc19261cb": {
+      "displayName": "Module6/Lambdas/Datadog/Function/AssetImage",
+      "source": {
+        "directory": "/home/ec2-user/workspace/netaiops/infra-cdk/lambda-src/module6/datadog",
+        "platform": "linux/amd64"
+      },
+      "destinations": {
+        "175678592674-us-east-1-fa51ec3a": {
+          "repositoryName": "cdk-hnb659fds-container-assets-175678592674-us-east-1",
+          "imageTag": "50ce69547f733f375697d5e2aa72b6071fbe833bdcdacdf4b1744e3dc19261cb",
+          "region": "us-east-1",
+          "assumeRoleArn": "arn:${AWS::Partition}:iam::175678592674:role/cdk-hnb659fds-image-publishing-role-175678592674-us-east-1"
+        }
+      }
+    },
+    "fbd47267b8355c72beda8646995a27492e18cd6bb5038b0ad7afa41e06223d6f": {
+      "displayName": "Module6/Lambdas/OpenSearch/Function/AssetImage",
+      "source": {
+        "directory": "/home/ec2-user/workspace/netaiops/infra-cdk/lambda-src/module6/opensearch",
+        "platform": "linux/amd64"
+      },
+      "destinations": {
+        "175678592674-us-east-1-db3ef4d0": {
+          "repositoryName": "cdk-hnb659fds-container-assets-175678592674-us-east-1",
+          "imageTag": "fbd47267b8355c72beda8646995a27492e18cd6bb5038b0ad7afa41e06223d6f",
+          "region": "us-east-1",
+          "assumeRoleArn": "arn:${AWS::Partition}:iam::175678592674:role/cdk-hnb659fds-image-publishing-role-175678592674-us-east-1"
+        }
+      }
+    },
+    "da8bb1fb9cd71024176ce82d1aedc603f224775e1050949723e6dc6c45f1fa86": {
+      "displayName": "Module6/Lambdas/ContainerInsight/Function/AssetImage",
+      "source": {
+        "directory": "/home/ec2-user/workspace/netaiops/infra-cdk/lambda-src/module6/container-insight",
+        "platform": "linux/amd64"
+      },
+      "destinations": {
+        "175678592674-us-east-1-abdd8f4e": {
+          "repositoryName": "cdk-hnb659fds-container-assets-175678592674-us-east-1",
+          "imageTag": "da8bb1fb9cd71024176ce82d1aedc603f224775e1050949723e6dc6c45f1fa86",
+          "region": "us-east-1",
+          "assumeRoleArn": "arn:${AWS::Partition}:iam::175678592674:role/cdk-hnb659fds-image-publishing-role-175678592674-us-east-1"
+        }
+      }
+    },
+    "5452dec774e99b8e313ea600117cb1a744a4ce9f2a254aa6660d174a661d4385": {
+      "displayName": "Module6/Lambdas/Chaos/Function/AssetImage",
+      "source": {
+        "directory": "/home/ec2-user/workspace/netaiops/infra-cdk/lambda-src/module6/chaos",
+        "platform": "linux/amd64"
+      },
+      "destinations": {
+        "175678592674-us-east-1-f9047773": {
+          "repositoryName": "cdk-hnb659fds-container-assets-175678592674-us-east-1",
+          "imageTag": "5452dec774e99b8e313ea600117cb1a744a4ce9f2a254aa6660d174a661d4385",
+          "region": "us-east-1",
+          "assumeRoleArn": "arn:${AWS::Partition}:iam::175678592674:role/cdk-hnb659fds-image-publishing-role-175678592674-us-east-1"
+        }
+      }
+    },
+    "83de8d69289e0fb3fe35ec8f3bff0dcc2e06a8a6ad84eb29869814c29eb94d6f": {
+      "displayName": "Module6/Lambdas/AlarmTrigger/Function/AssetImage",
+      "source": {
+        "directory": "/home/ec2-user/workspace/netaiops/infra-cdk/lambda-src/module6/alarm-trigger",
+        "platform": "linux/amd64"
+      },
+      "destinations": {
+        "175678592674-us-east-1-b1ecf068": {
+          "repositoryName": "cdk-hnb659fds-container-assets-175678592674-us-east-1",
+          "imageTag": "83de8d69289e0fb3fe35ec8f3bff0dcc2e06a8a6ad84eb29869814c29eb94d6f",
+          "region": "us-east-1",
+          "assumeRoleArn": "arn:${AWS::Partition}:iam::175678592674:role/cdk-hnb659fds-image-publishing-role-175678592674-us-east-1"
+        }
+      }
+    },
+    "665e1f04d72bf49fad8e0dd1744fc01961387fe09dfe063f4c01b22c6bb596cd": {
+      "displayName": "Module6/Lambdas/GitHub/Function/AssetImage",
+      "source": {
+        "directory": "/home/ec2-user/workspace/netaiops/infra-cdk/lambda-src/module6/github",
+        "platform": "linux/amd64"
+      },
+      "destinations": {
+        "175678592674-us-east-1-81fa9fc8": {
+          "repositoryName": "cdk-hnb659fds-container-assets-175678592674-us-east-1",
+          "imageTag": "665e1f04d72bf49fad8e0dd1744fc01961387fe09dfe063f4c01b22c6bb596cd",
+          "region": "us-east-1",
+          "assumeRoleArn": "arn:${AWS::Partition}:iam::175678592674:role/cdk-hnb659fds-image-publishing-role-175678592674-us-east-1"
+        }
+      }
+    }
+  }
+}

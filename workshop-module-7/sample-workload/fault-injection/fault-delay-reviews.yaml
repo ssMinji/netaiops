@@ -1,0 +1,41 @@
+# =============================================================================
+# Fault Injection: 7-second delay on reviews-v2
+# 장애 주입: reviews-v2에 7초 지연 (istio-sample 네임스페이스)
+# =============================================================================
+# Apply: kubectl apply -f fault-delay-reviews.yaml
+# Remove: kubectl delete -f fault-delay-reviews.yaml
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: reviews
+  namespace: istio-sample
+spec:
+  hosts:
+    - reviews
+  http:
+    - fault:
+        delay:
+          percentage:
+            value: 100.0
+          fixedDelay: 7s
+      match:
+        - headers:
+            end-user:
+              exact: jason
+      route:
+        - destination:
+            host: reviews
+            subset: v2
+    - route:
+        - destination:
+            host: reviews
+            subset: v1
+          weight: 80
+        - destination:
+            host: reviews
+            subset: v2
+          weight: 10
+        - destination:
+            host: reviews
+            subset: v3
+          weight: 10
